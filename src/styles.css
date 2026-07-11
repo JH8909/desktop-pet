@@ -19,7 +19,7 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: transparent;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
   color: var(--text);
   user-select: none;
   pointer-events: none;
@@ -99,6 +99,7 @@ button.secondary { background: linear-gradient(135deg, #8a4dff, #c34bff); color:
   pointer-events: auto;
   transform: translateZ(0);
   will-change: transform;
+  transition: opacity 0.12s ease;
   filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.24));
 }
 #petVideo.is-frozen { opacity: 0; }
@@ -116,6 +117,7 @@ button.secondary { background: linear-gradient(135deg, #8a4dff, #c34bff); color:
   opacity: 0;
   background: transparent;
   transform: translateZ(0);
+  transition: opacity 0.12s ease;
   filter: drop-shadow(0 12px 18px rgba(0, 0, 0, 0.24));
 }
 .pet-freeze.is-on { opacity: 1; }

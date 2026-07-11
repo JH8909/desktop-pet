@@ -32,7 +32,10 @@ def make_alpha_rgba(bgr: np.ndarray) -> np.ndarray:
 
     # Remove only background-like pixels connected to an outer edge. This
     # preserves enclosed low-saturation details such as the monster's eye.
-    background_like = ((saturation < 55) & (value > 95)).astype(np.uint8)
+    # Supports both blue-gray studio backgrounds and pure black screen plates.
+    background_like = (
+        (value < 28) | ((saturation < 55) & (value > 95))
+    ).astype(np.uint8)
     _, labels = cv2.connectedComponents(background_like, connectivity=8)
     border_labels = np.unique(
         np.concatenate((labels[0], labels[-1], labels[:, 0], labels[:, -1]))
@@ -61,6 +64,16 @@ def make_alpha_rgba(bgr: np.ndarray) -> np.ndarray:
         )
         if intersects_main_zone:
             cv2.drawContours(filled, [contour], -1, 255, -1)
+
+    # Fill enclosed holes (e.g. white eye region incorrectly marked transparent)
+    hole_mask = cv2.bitwise_not(filled)
+    _, hole_labels = cv2.connectedComponents(hole_mask, connectivity=8)
+    edge_labels = set(np.unique(np.concatenate((
+        hole_labels[0], hole_labels[-1], hole_labels[:, 0], hole_labels[:, -1]
+    ))).tolist())
+    edge_labels.discard(0)
+    outer_bg = np.isin(hole_labels, list(edge_labels))
+    filled[(~outer_bg) & (hole_mask > 0)] = 255
 
     alpha = cv2.GaussianBlur(filled, (0, 0), 1.4)
     rgba = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGBA)

@@ -39,8 +39,8 @@ const IDLE_LINES = [
   '乌云散尽，等你投喂'
 ];
 
-// 待机时轮换的短动作（播完回 idle）；不含整理/拖拽等任务态
-const IDLE_CLIP_POOL = ['thinking', 'hover', 'notify', 'scan'];
+// 待机时轮换的短动作；循环类视频会播放数秒后回 idle
+const IDLE_CLIP_POOL = ['thinking', 'hover', 'notify', 'scan', 'sleep'];
 
 const ACTIONS = {
   idle: { src: '../assets/videos/filemonster_idle.webm', loop: false, text: IDLE_LINES[0] },
@@ -48,7 +48,7 @@ const ACTIONS = {
   work: { src: '../assets/videos/filemonster_work.webm', loop: true, text: '咔嚓咔嚓，桌面变清爽' },
   success: { src: '../assets/videos/filemonster_success.webm', loop: false, text: '耶！又收拾干净一块' },
   error: { src: '../assets/videos/filemonster_error.webm', loop: false, text: '啊哦，这波翻车了…' },
-  sleep: { src: '../assets/videos/filemonster_sleep.webm', loop: true, text: 'zzZ…做梦都在分类' },
+  sleep: { src: '../assets/videos/filemonster_sleep.webm', loop: true, text: '💤 Zzz… 做梦都在分类' },
   wake: { src: '../assets/videos/filemonster_wake.webm', loop: false, text: '谁戳我？起来干活！' },
   scan: { src: '../assets/videos/filemonster_scan.webm', loop: true, text: '雷达启动，扫扫你的桌面' },
   hover: { src: '../assets/videos/filemonster_hover.webm', loop: false, text: '有文件？尽管砸过来' },
@@ -71,24 +71,40 @@ let activePointerId = null;
 let idleBlinkTimer = null;
 let idleHolding = false;
 let panelTransition = Promise.resolve();
+let lastGoodFrame = null;
 
 function hideIdleFreezeFrame() {
   petFreeze.classList.remove('is-on');
   video.classList.remove('is-frozen');
 }
 
-function showIdleFreezeFrame() {
-  const w = video.videoWidth || 640;
-  const h = video.videoHeight || 360;
+function captureVideoFrame() {
+  const w = video.videoWidth || 0;
+  const h = video.videoHeight || 0;
+  if (!w || !h) return false;
   if (petFreeze.width !== w) petFreeze.width = w;
   if (petFreeze.height !== h) petFreeze.height = h;
   try {
     const ctx = petFreeze.getContext('2d');
     ctx.clearRect(0, 0, w, h);
     ctx.drawImage(video, 0, 0, w, h);
+    const sample = ctx.getImageData(w >> 1, h >> 1, 1, 1).data;
+    if (sample[3] === 0) return false;
+    lastGoodFrame = { w, h, time: video.currentTime };
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function showIdleFreezeFrame() {
+  if (captureVideoFrame()) {
     petFreeze.classList.add('is-on');
     video.classList.add('is-frozen');
-  } catch {
+  } else if (lastGoodFrame) {
+    petFreeze.classList.add('is-on');
+    video.classList.add('is-frozen');
+  } else {
     hideIdleFreezeFrame();
   }
 }
@@ -104,30 +120,58 @@ function clearIdleBlinkTimer() {
 }
 
 function holdIdleRestPose() {
-  // 用 canvas 定格末帧，避免 video.pause 导致透明 WebM 消失，也避免末尾循环抖动
   idleHolding = true;
   video.loop = false;
   video.onended = null;
+
+  // 立即用预缓存帧冻结画面，避免视频结束后出现空白帧闪烁
+  if (lastGoodFrame) {
+    petFreeze.classList.add('is-on');
+    video.classList.add('is-frozen');
+  }
+
   const d = video.duration;
   const snap = () => {
     if (!idleHolding || currentAction !== 'idle') return;
-    showIdleFreezeFrame();
+    if (captureVideoFrame()) {
+      petFreeze.classList.add('is-on');
+      video.classList.add('is-frozen');
+    }
     video.pause();
   };
   if (d && Number.isFinite(d)) {
+    const seekTarget = Math.max(0, d - 0.05);
     const onSeeked = () => {
       video.removeEventListener('seeked', onSeeked);
       snap();
     };
     video.addEventListener('seeked', onSeeked);
     try {
-      video.currentTime = Math.max(0, d - 0.05);
+      video.currentTime = seekTarget;
     } catch {
       snap();
     }
   } else {
     snap();
   }
+}
+
+function waitForVideoFrame() {
+  return new Promise(resolve => {
+    let resolved = false;
+    const done = () => {
+      if (resolved) return;
+      resolved = true;
+      video.removeEventListener('timeupdate', onTime);
+      resolve();
+    };
+    const onTime = () => {
+      if (video.currentTime > 0) done();
+    };
+    video.addEventListener('timeupdate', onTime);
+    // 兜底：最多等 150ms，防止 timeupdate 永不触发导致卡死
+    setTimeout(done, 150);
+  });
 }
 
 function scheduleNextIdleBlink() {
@@ -153,7 +197,6 @@ function scheduleNextIdleBlink() {
 
 async function replayIdleBlink() {
   idleHolding = false;
-  hideIdleFreezeFrame();
   currentAction = 'idle';
   video.loop = false;
   video.onended = null;
@@ -169,10 +212,12 @@ async function replayIdleBlink() {
     }
   }
   if (!played) {
-    // 播放失败仍继续调度，避免冻结帧卡死
     scheduleNextIdleBlink();
     return;
   }
+  // 等视频真正渲染出帧后再移除冻结帧，避免中间出现空白闪烁
+  await waitForVideoFrame();
+  hideIdleFreezeFrame();
   video.onended = () => {
     if (currentAction !== 'idle') return;
     scheduleNextIdleBlink();
@@ -275,12 +320,20 @@ async function playAction(name, options = {}) {
     if (reuseIdle) {
       try { video.currentTime = 0; } catch {}
     } else {
+      // 切换视频源前先用冻结帧遮挡，避免 src 切换期间出现空白帧
+      if (!video.classList.contains('is-frozen')) {
+        const captured = !video.paused && captureVideoFrame();
+        if (captured || lastGoodFrame) {
+          petFreeze.classList.add('is-on');
+          video.classList.add('is-frozen');
+        }
+      }
       video.src = action.src;
       try { video.currentTime = 0; } catch {}
     }
   }
 
-  // 最多重试 3 次播放，成功后隐藏冻结帧（让视频显示）
+  // 最多重试 3 次播放，所有异常被捕获以防崩溃
   let played = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -291,11 +344,16 @@ async function playAction(name, options = {}) {
       if (attempt < 2) await new Promise(r => setTimeout(r, 120));
     }
   }
+
+  if (!actionState.isCurrent(actionToken)) return;
+
+  // 播放成功后等待实际帧渲染，再隐藏冻结帧
   if (played) {
+    await waitForVideoFrame();
+    if (!actionState.isCurrent(actionToken)) return;
     hideIdleFreezeFrame();
   }
 
-  if (!actionState.isCurrent(actionToken)) return;
   video.onended = () => {
     if (!actionState.isCurrent(actionToken) || video.loop) return;
     if (name === 'idle') {
@@ -308,6 +366,10 @@ async function playAction(name, options = {}) {
 
 function touch() {
   lastInteractionAt = Date.now();
+  if (idleClipTimeout) {
+    clearTimeout(idleClipTimeout);
+    idleClipTimeout = null;
+  }
 }
 
 function logResult(title, result) {
@@ -333,7 +395,10 @@ function logResult(title, result) {
 
 async function runWithAction(workingAction, task, successTitle, options = {}) {
   touch();
-  await playAction(workingAction, { restart: true, loop: true });
+  // 使用动作本身的 loop 设置：scan 等自带 loop:true 的会循环播放，
+  // notify/thinking 等一次性动画只播一遍
+  const actionConfig = ACTIONS[workingAction] || ACTIONS.idle;
+  await playAction(workingAction, { restart: true, loop: actionConfig.loop });
   try {
     const result = await task();
     if (options.requiresFileChange && !operationResult.didMutateFiles(result)) {
@@ -720,14 +785,26 @@ setInterval(() => {
   setSpeech(line);
 }, 18000);
 
-// 待机时自动切换短动作视频，播完由 playAction.onended 回 idle
+// 待机时自动切换短动作视频；非循环类播完回 idle，循环类播放 6-8 秒后回 idle
+const IDLE_LOOP_DURATION = 7000;
+let idleClipTimeout = null;
+
 setInterval(() => {
   if (document.hidden || draggingWindow || pointerStart || resizingPet) return;
-  if (currentAction !== 'idle') return;
+  if (currentAction !== 'idle' || idleHolding) return;
   if (Date.now() - lastInteractionAt < 6000) return;
   const name = IDLE_CLIP_POOL[Math.floor(Math.random() * IDLE_CLIP_POOL.length)];
   const line = IDLE_LINES[Math.floor(Math.random() * IDLE_LINES.length)];
-  playAction(name, { restart: true, loop: false, text: line });
+  const actionDef = ACTIONS[name] || ACTIONS.idle;
+  const shouldLoop = actionDef.loop;
+  playAction(name, { restart: true, loop: shouldLoop, text: line });
+  if (shouldLoop) {
+    if (idleClipTimeout) clearTimeout(idleClipTimeout);
+    idleClipTimeout = setTimeout(() => {
+      idleClipTimeout = null;
+      if (currentAction === name) playAction('idle', { restart: true });
+    }, IDLE_LOOP_DURATION + Math.random() * 2000);
+  }
 }, 12000);
 
 window.addEventListener('mousemove', event => {
@@ -737,6 +814,15 @@ window.addEventListener('mousemove', event => {
   touch();
   if (wasSleeping) playAction('wake', { restart: true });
   updateMousePassthrough(event);
+});
+
+video.addEventListener('timeupdate', () => {
+  if (video.paused || video.ended) return;
+  // 在视频播放后半段持续缓存有效帧，确保 onended/切换时已有可用冻结帧
+  const d = video.duration;
+  if (d && Number.isFinite(d) && video.currentTime > d * 0.4) {
+    captureVideoFrame();
+  }
 });
 
 video.addEventListener('error', () => {
