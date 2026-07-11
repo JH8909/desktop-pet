@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; media-src 'self' blob:; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>文件怪桌宠</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main id="app" class="app-shell collapsed">
+    <section id="petStage" class="pet-stage" aria-label="文件怪桌宠区域">
+      <div id="petInteractive" class="pet-interactive">
+        <div id="speech" class="speech">桌面躺平中…</div>
+        <div class="video-wrap">
+          <video id="petVideo" muted playsinline preload="auto" poster="../assets/videos/filemonster_poster.webp"></video>
+          <canvas id="petFreeze" class="pet-freeze" aria-hidden="true"></canvas>
+        </div>
+      </div>
+      <div id="dropHalo" class="drop-halo">丢进来，我帮你收</div>
+    </section>
+    <aside id="panel" class="control-panel">
+      <header class="panel-header">
+        <div>
+          <h1>文件怪</h1>
+          <p id="statusText">右键打开设置</p>
+        </div>
+        <div class="window-actions">
+          <button id="btnCollapse" title="收起/展开">◐</button>
+          <button id="btnMinimize" title="隐藏到托盘（双击托盘图标恢复）">—</button>
+          <button id="btnQuit" title="退出">×</button>
+        </div>
+      </header>
+      <div class="action-grid">
+        <button id="btnOrganize">整理桌面</button>
+        <button id="btnScreenshots">整理截图</button>
+        <button id="btnOpenVault">打开整理箱</button>
+        <button id="btnUndo">撤销整理</button>
+      </div>
+      <section class="settings-card">
+        <h2>设置</h2>
+        <label class="range-label">
+          文件怪大小
+          <div class="range-row">
+            <input id="petSize" type="range" min="160" max="360" step="10" value="220" />
+            <span id="petSizeValue">220px</span>
+          </div>
+        </label>
+        <label>整理箱路径（须在桌面/文档/下载内的子文件夹）<input id="vaultPath" type="text" /></label>
+        <div class="switches">
+          <label><input id="safeMode" type="checkbox" /> 安全模式</label>
+          <label><input id="moveFolders" type="checkbox" checked /> 移动文件夹</label>
+          <label><input id="addDatePrefix" type="checkbox" /> 日期前缀</label>
+          <label><input id="launchAtLogin" type="checkbox" /> 开机自启</label>
+          <label><input id="alwaysOnTop" type="checkbox" /> 总是置顶</label>
+        </div>
+        <label>分类规则 JSON<textarea id="rulesEditor" spellcheck="false"></textarea></label>
+        <button id="btnSaveSettings" class="secondary">保存设置</button>
+      </section>
+      <section class="result-card">
+        <h2>处理结果</h2>
+        <div id="resultLog" class="result-log">等待操作。</div>
+      </section>
+    </aside>
+  </main>
+  <script src="./action-state.js"></script>
+  <script src="./operation-result.js"></script>
+  <script src="./input-policy.js"></script>
+  <script src="./renderer.js"></script>
+</body>
+</html>

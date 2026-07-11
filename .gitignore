@@ -1,0 +1,11 @@
+node_modules/
+.tmp/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+Thumbs.db
+scripts/create-shortcut.ps1
+scripts/create-shortcut.vbs
+scripts/setup-shortcut.bat
+启动文件怪.bat

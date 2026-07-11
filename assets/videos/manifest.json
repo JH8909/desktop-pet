@@ -1,0 +1,113 @@
+{
+  "fps": 24.0,
+  "size": [
+    512,
+    512
+  ],
+  "segments": {
+    "idle": {
+      "start": 0.0,
+      "end": 0.95,
+      "loop": true,
+      "label": "待机",
+      "file": "filemonster_idle.webm",
+      "frames": 23
+    },
+    "drag": {
+      "start": 0.95,
+      "end": 2.1,
+      "loop": true,
+      "label": "拖拽",
+      "file": "filemonster_drag.webm",
+      "frames": 29
+    },
+    "work": {
+      "start": 2.45,
+      "end": 3.85,
+      "loop": true,
+      "label": "整理文件",
+      "file": "filemonster_work.webm",
+      "frames": 35
+    },
+    "success": {
+      "start": 3.9,
+      "end": 4.95,
+      "loop": false,
+      "label": "整理成功",
+      "file": "filemonster_success.webm",
+      "frames": 26
+    },
+    "error": {
+      "start": 5.45,
+      "end": 6.25,
+      "loop": false,
+      "label": "整理失败",
+      "file": "filemonster_error.webm",
+      "frames": 20
+    },
+    "sleep": {
+      "start": 6.45,
+      "end": 8.2,
+      "loop": true,
+      "label": "睡觉",
+      "file": "filemonster_sleep.webm",
+      "frames": 43
+    },
+    "wake": {
+      "start": 8.35,
+      "end": 9.55,
+      "loop": false,
+      "label": "唤醒",
+      "file": "filemonster_wake.webm",
+      "frames": 30
+    },
+    "scan": {
+      "start": 9.8,
+      "end": 10.3,
+      "loop": true,
+      "label": "扫描",
+      "file": "filemonster_scan.webm",
+      "frames": 13
+    },
+    "magic": {
+      "start": 10.45,
+      "end": 11.25,
+      "loop": false,
+      "label": "AI命名",
+      "file": "filemonster_magic.webm",
+      "frames": 20
+    },
+    "hover": {
+      "start": 11.4,
+      "end": 12.1,
+      "loop": false,
+      "label": "悬停",
+      "file": "filemonster_hover.webm",
+      "frames": 18
+    },
+    "notify": {
+      "start": 12.35,
+      "end": 13.25,
+      "loop": false,
+      "label": "提醒",
+      "file": "filemonster_notify.webm",
+      "frames": 22
+    },
+    "thinking": {
+      "start": 13.35,
+      "end": 14.7,
+      "loop": false,
+      "label": "思考",
+      "file": "filemonster_thinking.webm",
+      "frames": 33
+    },
+    "ingest": {
+      "start": 2.45,
+      "end": 3.25,
+      "loop": false,
+      "label": "吞入文件",
+      "file": "filemonster_ingest.webm",
+      "frames": 20
+    }
+  }
+}

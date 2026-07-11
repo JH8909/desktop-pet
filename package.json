@@ -1,0 +1,19 @@
+{
+  "name": "file-monster-video-desktop-pet",
+  "version": "1.0.0",
+  "description": "文件怪透明视频桌宠桌面整理插件（Electron + WebM Alpha）",
+  "main": "src/main.js",
+  "author": "JJH 梁",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js",
+    "test": "node tests/regression.test.js",
+    "process-video": "python3 scripts/process-video.py --input assets/source/filemonster_source.mp4 --frames .tmp/processed_frames --out assets/videos --width 640 --fps 24"
+  },
+  "devDependencies": {
+    "electron": "^38.8.6"
+  }
+}
