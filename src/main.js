@@ -14,9 +14,10 @@ let settingsCache = null;
 let lastBatch = null;
 let organizeBusy = false;
 
-const PANEL_WIDTH = 210;
+const PANEL_WIDTH = 280;
 const PET_PADDING = 38;
 const PET_EXTRA_HEIGHT = 58;
+const PANEL_HEIGHT = 420;
 const MAX_PET_SIZE = 360;
 const WIN_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;
 
@@ -230,6 +231,17 @@ async function saveSettings(next) {
   return settingsCache;
 }
 
+async function chooseVaultPath() {
+  const settings = await loadSettings();
+  const result = await dialog.showOpenDialog(win || undefined, {
+    title: '选择整理箱路径',
+    defaultPath: settings.vaultPath,
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || !result.filePaths.length) return { ok: false, canceled: true };
+  return { ok: true, path: result.filePaths[0] };
+}
+
 function getTrayIcon() {
   const iconPath = path.join(__dirname, '..', 'assets', 'icon-app.png');
   try {
@@ -276,7 +288,7 @@ function getWindowSize(petSize, expanded) {
   if (!expanded) return { width: collapsedW, height: collapsedH };
   return {
     width: size + PET_PADDING + PANEL_WIDTH + 14,
-    height: Math.max(400, size + PET_EXTRA_HEIGHT + 40)
+    height: Math.max(PANEL_HEIGHT + 8, size + PET_EXTRA_HEIGHT + 40)
   };
 }
 
@@ -333,6 +345,7 @@ function showAppContextMenu() {
     { label: '整理截图', click: () => win.webContents.send('pet-menu-action', 'organize-screenshots') },
     { type: 'separator' },
     { label: '打开整理箱', click: () => openVault() },
+    { label: '打开回收站', click: () => openTrash() },
     { label: '撤销最近整理', click: () => win.webContents.send('pet-menu-action', 'undo-organize') },
     { type: 'separator' },
     {
@@ -694,6 +707,19 @@ async function openVault() {
   return { ok: true, path: vaultPath };
 }
 
+async function openTrash() {
+  const settings = await loadSettings();
+  const vaultPath = resolveSafeVaultPath(settings.vaultPath);
+  settings.vaultPath = vaultPath;
+  const trashPath = path.join(vaultPath, '_回收站');
+  assertInsideVault(trashPath, vaultPath);
+  await ensureDir(trashPath);
+
+  const openError = await shell.openPath(trashPath);
+  if (openError) return { ok: false, message: openError, path: trashPath };
+  return { ok: true, path: trashPath };
+}
+
 function clampWindowPosition(x, y, width, height) {
   const display = screen.getDisplayNearestPoint({ x: Math.round(x + width / 2), y: Math.round(y + height / 2) });
   const area = display.workArea;
@@ -717,11 +743,13 @@ function resizeWindow(petSize, expanded) {
 function registerIpc() {
   ipcMain.handle('settings:get', async () => loadSettings());
   ipcMain.handle('settings:save', async (_event, next) => saveSettings(next || {}));
+  ipcMain.handle('settings:choose-vault', async () => chooseVaultPath());
   ipcMain.handle('organize:paths', async (_event, paths) => organizePaths(paths, { reason: 'drop', allowOutsideDesktop: true }));
   ipcMain.handle('organize:desktop', async () => organizeDesktop());
   ipcMain.handle('organize:screenshots', async () => organizeScreenshots());
   ipcMain.handle('organize:undo', async () => undoLastBatch());
   ipcMain.handle('vault:open', async () => openVault());
+  ipcMain.handle('trash:open', async () => openTrash());
   ipcMain.handle('window:apply-pet-size', async (_event, petSize, expanded) => {
     resizeWindow(petSize, expanded);
   });

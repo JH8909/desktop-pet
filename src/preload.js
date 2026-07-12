@@ -3,11 +3,13 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 contextBridge.exposeInMainWorld('fileMonster', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: settings => ipcRenderer.invoke('settings:save', settings),
+  chooseVaultPath: () => ipcRenderer.invoke('settings:choose-vault'),
   organizePaths: paths => ipcRenderer.invoke('organize:paths', paths),
   organizeDesktop: () => ipcRenderer.invoke('organize:desktop'),
   organizeScreenshots: () => ipcRenderer.invoke('organize:screenshots'),
   undoOrganize: () => ipcRenderer.invoke('organize:undo'),
   openVault: () => ipcRenderer.invoke('vault:open'),
+  openTrash: () => ipcRenderer.invoke('trash:open'),
   getPathForFile: file => {
     try {
       return webUtils.getPathForFile(file) || '';

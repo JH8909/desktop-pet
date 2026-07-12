@@ -1,89 +1,57 @@
 {
-  "fps": 24.0,
+  "fps": 30,
   "size": [
     512,
     512
   ],
+  "subjectHeight": 250,
+  "subjectHeights": {
+    "dizzy": 250,
+    "idle": 250,
+    "silly": 250,
+    "sleep": 250,
+    "wave": 250
+  },
   "segments": {
+    "dizzy": {
+      "file": "filemonster_dizzy.webp",
+      "frames": 98,
+      "durationMs": 3630,
+      "loop": true,
+      "label": "dizzy",
+      "subjectHeight": 250
+    },
     "idle": {
-      "file": "filemonster_idle.webm",
-      "frames": 96,
-      "loop": true,
-      "label": "idle"
-    },
-    "thinking": {
-      "file": "filemonster_thinking.webm",
-      "frames": 97,
+      "file": "filemonster_idle.webp",
+      "frames": 98,
+      "durationMs": 3630,
       "loop": false,
-      "label": "thinking"
+      "label": "idle",
+      "subjectHeight": 250
     },
-    "hover": {
-      "file": "filemonster_hover.webm",
-      "frames": 97,
+    "silly": {
+      "file": "filemonster_silly.webp",
+      "frames": 98,
+      "durationMs": 3630,
       "loop": false,
-      "label": "hover"
-    },
-    "notify": {
-      "file": "filemonster_notify.webm",
-      "frames": 97,
-      "loop": false,
-      "label": "notify"
-    },
-    "success": {
-      "file": "filemonster_success.webm",
-      "frames": 96,
-      "loop": false,
-      "label": "success"
-    },
-    "wake": {
-      "file": "filemonster_wake.webm",
-      "frames": 96,
-      "loop": false,
-      "label": "wake"
-    },
-    "scan": {
-      "file": "filemonster_scan.webm",
-      "frames": 96,
-      "loop": true,
-      "label": "scan"
-    },
-    "drag": {
-      "file": "filemonster_drag.webm",
-      "frames": 96,
-      "loop": true,
-      "label": "drag"
-    },
-    "work": {
-      "file": "filemonster_work.webm",
-      "frames": 96,
-      "loop": true,
-      "label": "work"
-    },
-    "error": {
-      "file": "filemonster_error.webm",
-      "frames": 96,
-      "loop": false,
-      "label": "error"
-    },
-    "ingest": {
-      "file": "filemonster_ingest.webm",
-      "frames": 96,
-      "loop": false,
-      "label": "ingest"
+      "label": "silly",
+      "subjectHeight": 250
     },
     "sleep": {
-      "file": "filemonster_sleep.webm",
-      "frames": 97,
+      "file": "filemonster_sleep.webp",
+      "frames": 98,
+      "durationMs": 3630,
       "loop": true,
-      "label": "sleep"
+      "label": "sleep",
+      "subjectHeight": 250
     },
-    "magic": {
-      "start": 10.45,
-      "end": 11.25,
+    "wave": {
+      "file": "filemonster_wave.webp",
+      "frames": 98,
+      "durationMs": 3630,
       "loop": false,
-      "label": "AI命名",
-      "file": "filemonster_magic.webm",
-      "frames": 20
+      "label": "wave",
+      "subjectHeight": 250
     }
   }
 }

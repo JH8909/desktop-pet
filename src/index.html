@@ -13,53 +13,59 @@
       <div id="petInteractive" class="pet-interactive">
         <div id="speech" class="speech">桌面躺平中…</div>
         <div class="video-wrap">
-          <video id="petVideo" muted playsinline preload="auto" poster="../assets/videos/filemonster_poster.webp"></video>
-          <canvas id="petFreeze" class="pet-freeze" aria-hidden="true"></canvas>
+          <img id="petSprite" src="../assets/videos/filemonster_idle.webp" alt="" draggable="false" />
         </div>
       </div>
       <div id="dropHalo" class="drop-halo">丢进来，我帮你收</div>
     </section>
     <aside id="panel" class="control-panel">
       <header class="panel-header">
-        <div>
-          <h1>文件怪</h1>
-          <p id="statusText">右键打开设置</p>
+        <div class="brand-lockup">
+          <img class="brand-pet" src="../assets/icon-app.png" alt="" draggable="false" />
+          <div class="brand-copy">
+            <h1>文件怪</h1>
+            <p id="statusText">稳住，能赢。帮你整理，一切井井有条！</p>
+          </div>
         </div>
         <div class="window-actions">
-          <button id="btnCollapse" title="收起/展开">◐</button>
-          <button id="btnMinimize" title="隐藏到托盘（双击托盘图标恢复）">—</button>
-          <button id="btnQuit" title="退出">×</button>
+          <button id="btnMinimize" title="隐藏到托盘（双击托盘图标恢复）"><svg class="window-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"></path></svg></button>
+          <button id="btnCollapse" title="收起/展开"><svg class="window-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"></rect></svg></button>
+          <button id="btnQuit" title="退出"><svg class="window-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8l8 8"></path><path d="M16 8l-8 8"></path></svg></button>
         </div>
       </header>
-      <div class="action-grid">
-        <button id="btnOrganize">整理桌面</button>
-        <button id="btnScreenshots">整理截图</button>
-        <button id="btnOpenVault">打开整理箱</button>
-        <button id="btnUndo">撤销整理</button>
-      </div>
-      <section class="settings-card">
+      <section class="panel-card quick-card">
+        <h2>快捷操作</h2>
+        <div class="quick-action-grid">
+          <button id="btnOrganize" class="quick-action top"><svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="12" rx="2"></rect><path d="M8 21h8"></path><path d="M12 17v4"></path></svg>整理桌面</button>
+          <button id="btnScreenshots" class="quick-action top"><svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"></rect><path d="m8 10 8 8"></path><path d="M8 18h8"></path></svg>整理截图</button>
+          <button id="btnOpenVault" class="quick-action bottom"><span class="action-label"><svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"></path><path d="M6 7v12h12V7"></path><path d="M9 11h6"></path><path d="M9 15h6"></path></svg><span>整理箱</span></span></button>
+          <button id="btnOpenTrash" class="quick-action bottom trash"><span class="action-label"><svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16"></path><path d="M7 8l1 12h8l1-12"></path><path d="M10 12v4"></path><path d="M14 12v4"></path><path d="M9 8l1-3h4l1 3"></path></svg><span>回收站</span></span></button>
+          <button id="btnUndo" class="quick-action bottom undo"><span class="action-label"><svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9H4V4"></path><path d="M4 9a8 8 0 1 1 2.34 5.66"></path></svg><span>撤销</span></span></button>
+        </div>
+      </section>
+      <section class="panel-card settings-card">
         <h2>设置</h2>
-        <label class="range-label">
-          文件怪大小
+        <div class="setting-row size-row">
+          <span class="setting-label">文件怪大小</span>
           <div class="range-row">
             <input id="petSize" type="range" min="160" max="360" step="10" value="220" />
             <span id="petSizeValue">220px</span>
           </div>
-        </label>
-        <label>整理箱路径（须在桌面/文档/下载内的子文件夹）<input id="vaultPath" type="text" /></label>
-        <div class="switches">
-          <label><input id="safeMode" type="checkbox" /> 安全模式</label>
-          <label><input id="moveFolders" type="checkbox" checked /> 移动文件夹</label>
-          <label><input id="addDatePrefix" type="checkbox" /> 日期前缀</label>
-          <label><input id="launchAtLogin" type="checkbox" /> 开机自启</label>
-          <label><input id="alwaysOnTop" type="checkbox" /> 总是置顶</label>
         </div>
-        <label>分类规则 JSON<textarea id="rulesEditor" spellcheck="false"></textarea></label>
-        <button id="btnSaveSettings" class="secondary">保存设置</button>
-      </section>
-      <section class="result-card">
-        <h2>处理结果</h2>
-        <div id="resultLog" class="result-log">等待操作。</div>
+        <div class="setting-row path-row">
+          <span class="setting-label">整理箱路径</span>
+          <div class="path-control">
+            <input id="vaultPath" type="text" />
+            <button id="btnBrowseVault" type="button">浏览</button>
+          </div>
+        </div>
+        <div class="switches">
+          <label class="setting-row switch"><span class="setting-label">安全模式</span><input id="safeMode" type="checkbox" /><span class="switch-ui"></span></label>
+          <label class="setting-row switch"><span class="setting-label">移动文件夹</span><input id="moveFolders" type="checkbox" checked /><span class="switch-ui"></span></label>
+          <label class="setting-row switch"><span class="setting-label">日期前缀</span><input id="addDatePrefix" type="checkbox" /><span class="switch-ui"></span></label>
+          <label class="setting-row switch"><span class="setting-label">开机自启</span><input id="launchAtLogin" type="checkbox" /><span class="switch-ui"></span></label>
+          <label class="setting-row switch"><span class="setting-label">总是置顶</span><input id="alwaysOnTop" type="checkbox" /><span class="switch-ui"></span></label>
+        </div>
       </section>
     </aside>
   </main>
