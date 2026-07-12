@@ -3,7 +3,7 @@ const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { restoreBatch } = require('../src/organizer-history');
+const { restoreBatch, buildNextBatch } = require('../src/organizer-history');
 const { createActionState } = require('../src/action-state');
 const { canOrganizeSource } = require('../src/organize-scope');
 const { didMutateFiles } = require('../src/operation-result');
@@ -26,6 +26,40 @@ async function testKeepsFailedUndoItems() {
   assert.deepEqual(result.restored, [{ source: 'vault/a.txt', target: 'desktop/a.txt' }]);
   assert.equal(result.errors.length, 1);
   assert.deepEqual(result.remainingItems, [batch[1]]);
+}
+
+function testDropUndoBatchAccumulatesMovedFiles() {
+  const previous = {
+    time: 1,
+    reason: 'drop',
+    items: [
+      { source: 'desktop/a.txt', target: 'vault/a.txt' },
+      { source: 'desktop/b.txt', target: 'vault/b.txt' }
+    ]
+  };
+  const moved = [{ source: 'desktop/c.txt', target: 'vault/c.txt' }];
+
+  const batch = buildNextBatch(previous, moved, { reason: 'drop' });
+
+  assert.equal(batch.reason, 'drop');
+  assert.deepEqual(batch.items, [...previous.items, ...moved]);
+}
+
+function testNonDropUndoBatchReplacesPreviousBatch() {
+  const previous = {
+    time: 1,
+    reason: 'drop',
+    items: [{ source: 'desktop/a.txt', target: 'vault/a.txt' }]
+  };
+  const moved = [
+    { source: 'desktop/b.txt', target: 'vault/b.txt' },
+    { source: 'desktop/c.txt', target: 'vault/c.txt' }
+  ];
+
+  const batch = buildNextBatch(previous, moved, { reason: 'desktop' });
+
+  assert.equal(batch.reason, 'desktop');
+  assert.deepEqual(batch.items, moved);
 }
 
 function testInvalidatesOlderActionCallback() {
@@ -322,6 +356,8 @@ function testSpeechCopyIsShortAndPlayful() {
 
 Promise.resolve()
   .then(testKeepsFailedUndoItems)
+  .then(testDropUndoBatchAccumulatesMovedFiles)
+  .then(testNonDropUndoBatchReplacesPreviousBatch)
   .then(testInvalidatesOlderActionCallback)
   .then(testAllowsExplicitDropOutsideDesktop)
   .then(testDoesNotTreatSkippedOnlyResultAsAFileChange)

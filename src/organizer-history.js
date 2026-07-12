@@ -28,4 +28,17 @@ async function restoreBatch(items, dependencies) {
   return { restored, errors, remainingItems: remainingItems.reverse() };
 }
 
-module.exports = { restoreBatch };
+function buildNextBatch(previousBatch, movedItems, options = {}) {
+  const reason = options.reason || 'organize';
+  const items = Array.isArray(movedItems) ? movedItems : [];
+  const previousItems = previousBatch && Array.isArray(previousBatch.items) ? previousBatch.items : [];
+  const shouldAppend = reason === 'drop' && previousBatch?.reason === 'drop';
+
+  return {
+    time: Date.now(),
+    reason,
+    items: shouldAppend ? [...previousItems, ...items] : items
+  };
+}
+
+module.exports = { restoreBatch, buildNextBatch };

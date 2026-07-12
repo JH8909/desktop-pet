@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, Menu, shell, screen, Tray, nativeImage, dia
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
-const { restoreBatch } = require('./organizer-history');
+const { restoreBatch, buildNextBatch } = require('./organizer-history');
 const { canOrganizeSource } = require('./organize-scope');
 
 let win;
@@ -607,11 +607,7 @@ async function organizePaths(inputPaths, options = {}) {
     }
 
     if (result.moved.length > 0) {
-      await persistLastBatch({
-        time: Date.now(),
-        reason: options.reason || 'organize',
-        items: result.moved
-      });
+      await persistLastBatch(buildNextBatch(lastBatch, result.moved, { reason: options.reason || 'organize' }));
     }
     return result;
   });
