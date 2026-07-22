@@ -9,6 +9,15 @@ const { canOrganizeSource } = require('../src/organize-scope');
 const { didMutateFiles } = require('../src/operation-result');
 const { shouldPassThroughMouse } = require('../src/input-policy');
 
+function hasImageMagick() {
+  try {
+    execFileSync('magick', ['-version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function testKeepsFailedUndoItems() {
   const batch = [
     { source: 'desktop/a.txt', target: 'vault/a.txt' },
@@ -131,6 +140,11 @@ function testKeepsOnlyFiveWebpActionStates() {
 }
 
 function testWebpSubjectsShareConsistentHeight() {
+  if (!hasImageMagick()) {
+    console.warn('skipping WebP subject height check: ImageMagick magick is not installed');
+    return;
+  }
+
   const root = path.join(__dirname, '..');
   const files = [
     'filemonster_dizzy.webp',
