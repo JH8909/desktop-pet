@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js && node --check src/ai-client.js",
     "test": "node tests/regression.test.js",
     "process-video": "python3 scripts/process-video.py --input assets/source/filemonster_source.mp4 --frames .tmp/processed_frames --out assets/videos --width 640 --fps 24"
   },

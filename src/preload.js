@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('fileMonster', {
   chooseVaultPath: () => ipcRenderer.invoke('settings:choose-vault'),
   organizePaths: paths => ipcRenderer.invoke('organize:paths', paths),
   organizeDesktop: () => ipcRenderer.invoke('organize:desktop'),
+  runAiCommand: command => ipcRenderer.invoke('ai:command', command),
+  analyzeImageUrlWithAiStream: input => ipcRenderer.invoke('ai:image-url-stream', input),
   organizeScreenshots: () => ipcRenderer.invoke('organize:screenshots'),
   undoOrganize: () => ipcRenderer.invoke('organize:undo'),
   openVault: () => ipcRenderer.invoke('vault:open'),
@@ -25,6 +27,8 @@ contextBridge.exposeInMainWorld('fileMonster', {
   minimize: () => ipcRenderer.send('window:minimize'),
   quit: () => ipcRenderer.send('app:quit'),
   setMousePassthrough: passthrough => ipcRenderer.send('window:set-passthrough', passthrough),
+  onAiStreamChunk: callback => ipcRenderer.on('ai:stream-chunk', (_event, payload) => callback(payload)),
+  onDesktopActivity: callback => ipcRenderer.on('desktop:activity', (_event, payload) => callback(payload)),
   onWindowResized: callback => ipcRenderer.on('window:resized', () => callback()),
   onMenuAction: callback => ipcRenderer.on('pet-menu-action', (_event, action) => callback(action)),
   onSettingsChanged: callback => ipcRenderer.on('pet-settings-changed', (_event, settings) => callback(settings))

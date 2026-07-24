@@ -4,6 +4,14 @@ const fsp = fs.promises;
 const path = require('path');
 const { restoreBatch, buildNextBatch } = require('./organizer-history');
 const { canOrganizeSource } = require('./organize-scope');
+const {
+  AGNES_BASE_URL,
+  AGNES_MODEL,
+  AGNES_FALLBACK_MODEL,
+  getAgnesApiKey,
+  requestAiAgentPlan,
+  requestAiImageAnswerStream
+} = require('./ai-client');
 
 let win;
 let tray = null;
@@ -13,6 +21,11 @@ let dragTimer = null;
 let settingsCache = null;
 let lastBatch = null;
 let organizeBusy = false;
+let pendingAiPlan = null;
+let desktopWatcher = null;
+let desktopWatchReady = false;
+let desktopEventTimer = null;
+let recentDesktopEvents = [];
 
 const PANEL_WIDTH = 280;
 const PET_PADDING = 38;
@@ -153,9 +166,37 @@ function defaultSettings() {
     moveFolders: true,
     addDatePrefix: false,
     petSize: 220,
+    aiBaseUrl: AGNES_BASE_URL,
+    agnesModel: AGNES_MODEL,
+    agnesFallbackModel: AGNES_FALLBACK_MODEL,
+    agnesApiKey: '',
     screenshotKeywords: ['screenshot', 'screen shot', '截屏', '截图', '屏幕快照', 'スクリーンショット'],
     rules: DEFAULT_RULES
   };
+}
+
+function toPublicSettings(settings) {
+  const copy = { ...settings };
+  copy.agnesApiKey = '';
+  copy.hasAgnesApiKey = Boolean(getAgnesApiKey(settings));
+  return copy;
+}
+
+function getLoginItemOptions(openAtLogin) {
+  const options = { openAtLogin: Boolean(openAtLogin) };
+  if (process.platform === 'win32' && !app.isPackaged) {
+    options.path = process.execPath;
+    options.args = [app.getAppPath()];
+  }
+  return options;
+}
+
+function syncLoginItemSettings(settings) {
+  app.setLoginItemSettings(getLoginItemOptions(settings.launchAtLogin));
+}
+
+function isLaunchAtLoginEnabled() {
+  return app.getLoginItemSettings(getLoginItemOptions(true)).openAtLogin;
 }
 
 async function readJsonSafe(filePath, fallback) {
@@ -205,6 +246,9 @@ async function loadSettings() {
     settingsCache.rules = normalizeRules(settingsCache.rules);
     settingsCache.safeMode = settingsCache.safeMode !== false;
     settingsCache.petSize = clampPetSize(settingsCache.petSize);
+    settingsCache.aiBaseUrl = String(settingsCache.aiBaseUrl || AGNES_BASE_URL).trim();
+    settingsCache.agnesModel = String(settingsCache.agnesModel || AGNES_MODEL).trim();
+    settingsCache.agnesFallbackModel = String(settingsCache.agnesFallbackModel || AGNES_FALLBACK_MODEL).trim();
   }
   return settingsCache;
 }
@@ -219,6 +263,10 @@ async function saveSettings(next) {
   if (patch.alwaysOnTop !== undefined) patch.alwaysOnTop = Boolean(patch.alwaysOnTop);
   if (patch.launchAtLogin !== undefined) patch.launchAtLogin = Boolean(patch.launchAtLogin);
   if (patch.addDatePrefix !== undefined) patch.addDatePrefix = Boolean(patch.addDatePrefix);
+  if (patch.aiBaseUrl !== undefined) patch.aiBaseUrl = String(patch.aiBaseUrl || AGNES_BASE_URL).trim();
+  if (patch.agnesModel !== undefined) patch.agnesModel = String(patch.agnesModel || AGNES_MODEL).trim();
+  if (patch.agnesFallbackModel !== undefined) patch.agnesFallbackModel = String(patch.agnesFallbackModel || AGNES_FALLBACK_MODEL).trim();
+  if (patch.agnesApiKey !== undefined) patch.agnesApiKey = String(patch.agnesApiKey || '').trim();
 
   settingsCache = { ...(await loadSettings()), ...patch };
   settingsCache.vaultPath = resolveSafeVaultPath(settingsCache.vaultPath);
@@ -226,7 +274,7 @@ async function saveSettings(next) {
 
   await fsp.mkdir(path.dirname(getSettingsPath()), { recursive: true });
   await fsp.writeFile(getSettingsPath(), JSON.stringify(settingsCache, null, 2), 'utf8');
-  app.setLoginItemSettings({ openAtLogin: Boolean(settingsCache.launchAtLogin) });
+  syncLoginItemSettings(settingsCache);
   if (win) win.setAlwaysOnTop(Boolean(settingsCache.alwaysOnTop), 'floating');
   return settingsCache;
 }
@@ -354,16 +402,16 @@ function showAppContextMenu() {
       checked: win.isAlwaysOnTop(),
       click: async item => {
         await saveSettings({ alwaysOnTop: item.checked });
-        win.webContents.send('pet-settings-changed', await loadSettings());
+        win.webContents.send('pet-settings-changed', toPublicSettings(await loadSettings()));
       }
     },
     {
       label: '开机自启动',
       type: 'checkbox',
-      checked: app.getLoginItemSettings().openAtLogin,
+      checked: isLaunchAtLoginEnabled(),
       click: async item => {
         await saveSettings({ launchAtLogin: item.checked });
-        win.webContents.send('pet-settings-changed', await loadSettings());
+        win.webContents.send('pet-settings-changed', toPublicSettings(await loadSettings()));
       }
     },
     { type: 'separator' },
@@ -563,6 +611,313 @@ async function confirmDangerousAction(message, detail) {
   return result.response === 1;
 }
 
+function collectFileMetadata(source, stat, settings) {
+  return {
+    source,
+    name: path.basename(source),
+    ext: stat.isDirectory() ? '' : normalizeExt(source),
+    type: stat.isDirectory() ? 'directory' : 'file',
+    size: stat.isDirectory() ? 0 : stat.size,
+    modifiedAt: stat.mtime.toISOString(),
+    currentCategory: getCategory(source, stat.isDirectory(), settings)
+  };
+}
+
+async function collectDesktopAiCandidates(settings) {
+  const desktop = getDesktopRoot();
+  const names = await fsp.readdir(desktop);
+  const candidates = [];
+
+  for (const name of names) {
+    const source = path.join(desktop, name);
+    try {
+      const stat = await fsp.lstat(source);
+      const reason = shouldSkip(source, stat, settings);
+      if (!reason) candidates.push(collectFileMetadata(source, stat, settings));
+    } catch {}
+  }
+
+  return candidates
+    .sort((a, b) => String(b.modifiedAt).localeCompare(String(a.modifiedAt)))
+    .slice(0, 80);
+}
+
+function rememberDesktopEvent(event) {
+  const clean = {
+    type: event.type || 'change',
+    name: String(event.name || '').slice(0, 160),
+    time: new Date().toISOString()
+  };
+  recentDesktopEvents = [clean, ...recentDesktopEvents].slice(0, 20);
+}
+
+function summarizeDesktopEvents(events) {
+  const names = events.map(event => event.name).filter(Boolean);
+  if (!names.length) return '';
+  if (names.length === 1) return `我看到桌面新增/变化了：${names[0]}。要我看看怎么处理吗？`;
+  return `我看到桌面有 ${names.length} 个新变化，比如 ${names.slice(0, 3).join('、')}。要我先判断哪些该整理、哪些别动吗？`;
+}
+
+function startDesktopWatcher() {
+  if (desktopWatcher) return;
+  const desktop = getDesktopRoot();
+  try {
+    const known = new Set(fs.readdirSync(desktop));
+    desktopWatcher = fs.watch(desktop, { persistent: false }, (_eventType, filename) => {
+      const name = String(filename || '').trim();
+      if (!name || name === '文件怪整理箱') return;
+      if (!desktopWatchReady) return;
+      const isNew = !known.has(name);
+      known.add(name);
+      if (!isNew) return;
+      rememberDesktopEvent({ type: 'created', name });
+      if (desktopEventTimer) clearTimeout(desktopEventTimer);
+      desktopEventTimer = setTimeout(() => {
+        desktopEventTimer = null;
+        if (!win || win.isDestroyed()) return;
+        const message = summarizeDesktopEvents(recentDesktopEvents.slice(0, 5));
+        if (message) win.webContents.send('desktop:activity', { message, events: recentDesktopEvents.slice(0, 5) });
+      }, 1200);
+    });
+    setTimeout(() => { desktopWatchReady = true; }, 1500);
+  } catch {}
+}
+
+function stopDesktopWatcher() {
+  if (desktopEventTimer) {
+    clearTimeout(desktopEventTimer);
+    desktopEventTimer = null;
+  }
+  if (desktopWatcher) {
+    try { desktopWatcher.close(); } catch {}
+    desktopWatcher = null;
+  }
+}
+
+function buildAiTargetName(source, isDirectory, suggestedName) {
+  const fallback = path.basename(source);
+  const raw = sanitizeName(suggestedName || fallback);
+  if (isDirectory) return raw;
+  const ext = normalizeExt(source);
+  if (!ext) return raw;
+  const base = sanitizeName(path.basename(raw, path.extname(raw)));
+  return sanitizeName(`${base}${ext}`);
+}
+
+async function applyAiSuggestions(items, settings) {
+  return withOrganizeLock(async () => {
+    const vaultPath = resolveSafeVaultPath(settings.vaultPath);
+    settings.vaultPath = vaultPath;
+    await ensureDir(vaultPath);
+    const result = { ok: true, moved: [], deleted: [], skipped: [], errors: [] };
+
+    for (const item of items) {
+      try {
+        const source = path.resolve(String(item.source));
+        if (!(await exists(source))) {
+          result.skipped.push({ source, reason: '文件不存在' });
+          continue;
+        }
+
+        const stat = await fsp.lstat(source);
+        const reason = shouldSkip(source, stat, settings);
+        if (reason) {
+          result.skipped.push({ source, reason });
+          continue;
+        }
+
+        const safeCategory = sanitizeCategoryName(item.category || getCategory(source, stat.isDirectory(), settings));
+        const destDir = path.resolve(path.join(vaultPath, safeCategory));
+        assertInsideVault(destDir, vaultPath);
+        await ensureDir(destDir);
+
+        const targetName = buildAiTargetName(source, stat.isDirectory(), item.suggestedName);
+        const target = await uniquePath(path.join(destDir, targetName));
+        assertInsideVault(target, vaultPath);
+
+        await moveItem(source, target);
+        result.moved.push({ source, target, category: safeCategory, reason: item.reason || 'AI 建议' });
+      } catch (err) {
+        result.ok = false;
+        result.errors.push({ source: item.source, message: err.message });
+      }
+    }
+
+    if (result.moved.length > 0) {
+      await persistLastBatch(buildNextBatch(lastBatch, result.moved, { reason: 'ai-desktop' }));
+    }
+    return result;
+  });
+}
+
+async function moveAiCleanupItemsToTrash(items, settings) {
+  return withOrganizeLock(async () => {
+    const vaultPath = resolveSafeVaultPath(settings.vaultPath);
+    settings.vaultPath = vaultPath;
+    const trashPath = path.join(vaultPath, '_回收站');
+    assertInsideVault(trashPath, vaultPath);
+    await ensureDir(trashPath);
+    const result = { ok: true, moved: [], deleted: [], skipped: [], errors: [] };
+
+    for (const item of items) {
+      try {
+        const source = path.resolve(String(item.source));
+        if (!(await exists(source))) {
+          result.skipped.push({ source, reason: '文件不存在' });
+          continue;
+        }
+
+        const stat = await fsp.lstat(source);
+        const reason = shouldSkip(source, stat, settings);
+        if (reason) {
+          result.skipped.push({ source, reason });
+          continue;
+        }
+
+        const target = await uniquePath(path.join(trashPath, sanitizeName(path.basename(source))));
+        assertInsideVault(target, vaultPath);
+        await moveItem(source, target);
+        result.moved.push({ source, target, category: '_回收站', reason: item.reason || 'AI 清理建议' });
+      } catch (err) {
+        result.ok = false;
+        result.errors.push({ source: item.source, message: err.message });
+      }
+    }
+
+    if (result.moved.length > 0) {
+      await persistLastBatch(buildNextBatch(lastBatch, result.moved, { reason: 'ai-cleanup' }));
+    }
+    return result;
+  });
+}
+
+function isConfirmCommand(text) {
+  return /^(确认|执行|开始|同意|可以|yes|ok)$/i.test(String(text || '').trim());
+}
+
+function isCancelCommand(text) {
+  return /^(取消|算了|不用|别动|停止|cancel|no)$/i.test(String(text || '').trim());
+}
+
+function shouldAttachDesktopContext(text, hasRecentActivity = false) {
+  const command = String(text || '').trim();
+  if (/桌面|文件|文件夹|截图|截屏|下载|整理|归档|清理|删除|回收|规则|项目|最近|刚才|desktop|file|folder|screenshot|download|organize|clean|cleanup|delete|rule|project/i.test(command)) {
+    return true;
+  }
+  return Boolean(hasRecentActivity && /这些|这个|那些|它们|刚才|最近/.test(command));
+}
+
+function summarizePendingPlan(plan) {
+  const items = plan.items || [];
+  const preview = items.slice(0, 5).map(item => {
+    const name = path.basename(item.source);
+    if (plan.intent === 'cleanup') return `${name}：${item.reason || '低风险'}`;
+    return `${name} -> ${item.category || '其他'}`;
+  });
+  const more = items.length > preview.length ? `\n另外还有 ${items.length - preview.length} 个。` : '';
+  const action = plan.intent === 'cleanup' ? '移入回收站' : '整理归档';
+  return `${plan.speech || `我准备${action} ${items.length} 个项目。`}\n${preview.join('\n')}${more}\n输入“确认”我再执行，输入“取消”放弃。`;
+}
+
+async function executePendingAiPlan() {
+  if (!pendingAiPlan) return { ok: false, moved: [], deleted: [], skipped: [], errors: [], message: '没有待确认的 AI 计划' };
+  const plan = pendingAiPlan;
+  pendingAiPlan = null;
+
+  if (plan.intent === 'cleanup') {
+    const lowRiskItems = (plan.items || []).filter(item => item.risk === 'low');
+    if (!lowRiskItems.length) return { ok: false, moved: [], deleted: [], skipped: [], errors: [], message: '待执行计划里没有低风险清理项' };
+    const result = await moveAiCleanupItemsToTrash(lowRiskItems, plan.settings);
+    result.message = result.moved.length ? `已按确认移入回收站：${result.moved.length} 个` : result.message || '没有文件被移动';
+    return result;
+  }
+
+  if (plan.intent === 'organize') {
+    const result = await applyAiSuggestions(plan.items || [], plan.settings);
+    result.message = result.moved.length ? `已按确认整理：${result.moved.length} 个` : result.message || '没有文件被移动';
+    return result;
+  }
+
+  return { ok: false, moved: [], deleted: [], skipped: [], errors: [], message: '待确认计划不可执行' };
+}
+
+async function runAiCommand(command) {
+  const settings = await loadSettings();
+  const text = String(command || '').trim();
+  if (!text) return { ok: false, message: '请输入 AI 指令' };
+  if (isCancelCommand(text)) {
+    pendingAiPlan = null;
+    return { ok: true, moved: [], deleted: [], skipped: [], errors: [], message: '已取消待确认计划' };
+  }
+  if (isConfirmCommand(text)) return executePendingAiPlan();
+  if (!getAgnesApiKey(settings)) {
+    return { ok: false, moved: [], deleted: [], skipped: [], errors: [], message: '请先填写 Agnes API Key，或设置 AGNES_API_KEY 环境变量' };
+  }
+
+  const attachDesktopContext = shouldAttachDesktopContext(text, recentDesktopEvents.length > 0) || Boolean(pendingAiPlan);
+  const files = attachDesktopContext ? await collectDesktopAiCandidates(settings) : [];
+  const plan = await requestAiAgentPlan(settings, text, files, {
+    mode: attachDesktopContext ? 'desktop-agent' : 'general-assistant',
+    recentDesktopEvents: attachDesktopContext ? recentDesktopEvents : [],
+    pendingPlan: pendingAiPlan ? { intent: pendingAiPlan.intent, count: pendingAiPlan.items.length } : null
+  });
+
+  if (plan.intent === 'cleanup') {
+    const lowRiskItems = (plan.items || []).filter(item => item.risk === 'low');
+    if (!lowRiskItems.length) return { ok: false, moved: [], deleted: [], skipped: [], errors: [], message: plan.speech || 'AI 没有找到低风险清理项' };
+    pendingAiPlan = { intent: 'cleanup', items: lowRiskItems, settings };
+    return { ok: true, moved: [], deleted: [], skipped: [], errors: [], message: summarizePendingPlan(pendingAiPlan) };
+  }
+
+  if (plan.intent === 'organize') {
+    const items = (plan.items || []).map(item => {
+      const file = files.find(candidate => candidate.source === item.source);
+      return {
+        ...item,
+        category: sanitizeCategoryName(item.category || '其他'),
+        targetName: buildAiTargetName(item.source, file?.type === 'directory', item.suggestedName)
+      };
+    });
+    if (!items.length) return { ok: false, moved: [], deleted: [], skipped: [], errors: [], message: plan.speech || 'AI 没有给出可执行建议' };
+    pendingAiPlan = { intent: 'organize', items, settings };
+    return { ok: true, moved: [], deleted: [], skipped: [], errors: [], message: summarizePendingPlan(pendingAiPlan) };
+  }
+
+  if (plan.intent === 'rules') {
+    const nextRules = normalizeRules({ ...settings.rules, ...plan.rules });
+    const nextKeywords = plan.screenshotKeywords.length
+      ? [...new Set([...(settings.screenshotKeywords || []), ...plan.screenshotKeywords])]
+      : settings.screenshotKeywords;
+    await saveSettings({ rules: nextRules, screenshotKeywords: nextKeywords });
+    if (win) win.webContents.send('pet-settings-changed', toPublicSettings(await loadSettings()));
+    const ruleLines = Object.entries(plan.rules || {}).map(([category, extensions]) => `${category}: ${extensions.join(', ')}`);
+    const keywordLine = plan.screenshotKeywords.length ? `截图关键词: ${plan.screenshotKeywords.join(', ')}` : '';
+    const detail = [...ruleLines, keywordLine].filter(Boolean).join('\n');
+    return { ok: true, moved: [], deleted: [], skipped: [], errors: [], message: plan.speech || `规则已保存${detail ? `\n${detail}` : ''}` };
+  }
+
+  return { ok: true, moved: [], deleted: [], skipped: [], errors: [], message: plan.speech || '我需要你再说具体一点' };
+}
+
+async function analyzeImageUrlWithAiStream(input, sender) {
+  const settings = await loadSettings();
+  const requestId = String(input?.requestId || '');
+  const imageUrl = String(input?.imageUrl || '').trim();
+  const question = String(input?.question || '').trim();
+  const sendDelta = delta => {
+    if (sender && requestId) sender.send('ai:stream-chunk', { requestId, delta });
+  };
+  if (!getAgnesApiKey(settings)) {
+    return { ok: false, message: '请先填写 Agnes API Key，或设置 AGNES_API_KEY 环境变量' };
+  }
+  if (!/^https?:\/\//i.test(imageUrl)) {
+    return { ok: false, message: '请输入公开可访问的 http/https 图片 URL，本地文件路径不能直接传给 Agnes 图像理解' };
+  }
+
+  const result = await requestAiImageAnswerStream(settings, question, imageUrl, { onDelta: sendDelta });
+  return { ok: true, moved: [], deleted: [], skipped: [], errors: [], message: result.answer || 'AI 没有返回图片分析结果' };
+}
+
 async function organizePaths(inputPaths, options = {}) {
   return withOrganizeLock(async () => {
     const settings = await loadSettings();
@@ -737,11 +1092,13 @@ function resizeWindow(petSize, expanded) {
 }
 
 function registerIpc() {
-  ipcMain.handle('settings:get', async () => loadSettings());
-  ipcMain.handle('settings:save', async (_event, next) => saveSettings(next || {}));
+  ipcMain.handle('settings:get', async () => toPublicSettings(await loadSettings()));
+  ipcMain.handle('settings:save', async (_event, next) => toPublicSettings(await saveSettings(next || {})));
   ipcMain.handle('settings:choose-vault', async () => chooseVaultPath());
   ipcMain.handle('organize:paths', async (_event, paths) => organizePaths(paths, { reason: 'drop', allowOutsideDesktop: true }));
   ipcMain.handle('organize:desktop', async () => organizeDesktop());
+  ipcMain.handle('ai:command', async (_event, command) => runAiCommand(command));
+  ipcMain.handle('ai:image-url-stream', async (event, input) => analyzeImageUrlWithAiStream(input, event.sender));
   ipcMain.handle('organize:screenshots', async () => organizeScreenshots());
   ipcMain.handle('organize:undo', async () => undoLastBatch());
   ipcMain.handle('vault:open', async () => openVault());
@@ -810,13 +1167,16 @@ app.whenReady().then(async () => {
   settingsCache = { ...defaults, ...loaded, vaultPath: safeVault, rules: loaded.rules };
 
   if (shouldPersist) await saveSettings(settingsCache);
+  syncLoginItemSettings(settingsCache);
   await loadLastBatch();
   createWindow();
   createTray();
+  startDesktopWatcher();
 });
 
 app.on('before-quit', () => {
   appIsQuitting = true;
+  stopDesktopWatcher();
   if (dragTimer) {
     clearInterval(dragTimer);
     dragTimer = null;

@@ -8,6 +8,24 @@ const { createActionState } = require('../src/action-state');
 const { canOrganizeSource } = require('../src/organize-scope');
 const { didMutateFiles } = require('../src/operation-result');
 const { shouldPassThroughMouse } = require('../src/input-policy');
+const {
+  AGNES_BASE_URL,
+  AGNES_MODEL,
+  normalizeAiPlanContent,
+  normalizeAiCleanupContent,
+  normalizeAiCommandContent,
+  normalizeAiRulesContent,
+  normalizeAiAgentContent,
+  buildAiOrganizeMessages,
+  buildAiCleanupMessages,
+  buildAiCommandMessages,
+  buildAiRulesMessages,
+  buildAiAgentMessages,
+  buildAiQuestionMessages,
+  buildAiImageMessages,
+  extractStreamDelta,
+  requestAiQuestionAnswerStream
+} = require('../src/ai-client');
 
 function hasImageMagick() {
   try {
@@ -96,6 +114,122 @@ function testKeepsDropTargetInteractive() {
   assert.equal(shouldPassThroughMouse({ panelCollapsed: true, dropTargetEnabled: false }), true);
 }
 
+function testAiPlanKeepsOnlyKnownMetadataPaths() {
+  const files = [
+    { source: 'C:/Desktop/a.pdf', name: 'a.pdf', ext: '.pdf', type: 'file', size: 10 },
+    { source: 'C:/Desktop/b.png', name: 'b.png', ext: '.png', type: 'file', size: 20 }
+  ];
+  const messages = buildAiOrganizeMessages(files);
+  const plan = normalizeAiPlanContent(JSON.stringify({
+    items: [
+      { source: 'C:/Desktop/a.pdf', category: '发票', suggestedName: '2026-发票.pdf', reason: '文件名像发票' },
+      { source: 'C:/Secret/c.txt', category: '私密', suggestedName: 'c.txt', reason: '不在扫描列表' }
+    ]
+  }), files);
+
+  assert.equal(AGNES_BASE_URL, 'https://apihub.agnes-ai.com/v1');
+  assert.equal(AGNES_MODEL, 'agnes-2.5-flash');
+  assert.match(messages[0].content, /只读取了文件名|文件元数据|不要建议删除文件/);
+  assert.deepEqual(plan.items, [
+    { source: 'C:/Desktop/a.pdf', category: '发票', suggestedName: '2026-发票.pdf', reason: '文件名像发票' }
+  ]);
+}
+
+function testAiCleanupKeepsOnlyKnownRiskItems() {
+  const files = [
+    { source: 'C:/Desktop/debug.log', name: 'debug.log', ext: '.log', type: 'file', size: 10 },
+    { source: 'C:/Desktop/report.docx', name: 'report.docx', ext: '.docx', type: 'file', size: 20 }
+  ];
+  const messages = buildAiCleanupMessages(files);
+  const plan = normalizeAiCleanupContent(JSON.stringify({
+    items: [
+      { source: 'C:/Desktop/debug.log', risk: 'low', reason: '日志文件' },
+      { source: 'C:/Desktop/report.docx', risk: 'important', reason: '非法风险等级' },
+      { source: 'C:/Other/cache.tmp', risk: 'low', reason: '不在扫描列表' }
+    ]
+  }), files);
+
+  assert.match(messages[0].content, /不要建议永久删除/);
+  assert.deepEqual(plan.items, [
+    { source: 'C:/Desktop/debug.log', risk: 'low', reason: '日志文件' }
+  ]);
+}
+
+function testAiCommandRulesAndQuestionContracts() {
+  const files = [{ source: 'C:/Desktop/a.fig', name: 'a.fig', ext: '.fig', type: 'file', size: 10 }];
+  const commandMessages = buildAiCommandMessages('把 fig 放设计文件', files);
+  const rulesMessages = buildAiRulesMessages('以后 .fig 放设计文件', { 图片: ['.png'] });
+  const questionMessages = buildAiQuestionMessages('这些文件是什么', files);
+  const imageMessages = buildAiImageMessages('分析错误截图', 'https://example.com/error.png');
+  const command = normalizeAiCommandContent(JSON.stringify({
+    action: 'organize',
+    items: [{ source: 'C:/Desktop/a.fig', category: '设计文件', suggestedName: 'a.fig', reason: 'fig 文件' }]
+  }), files);
+  const rules = normalizeAiRulesContent(JSON.stringify({
+    rules: { 设计文件: ['fig', '.FIG', '.sketch'] },
+    screenshotKeywords: ['截图']
+  }));
+
+  assert.match(commandMessages[0].content, /organize、cleanup、answer/);
+  assert.match(rulesMessages[0].content, /分类规则生成器/);
+  assert.match(questionMessages[0].content, /不要声称读取了文件内容/);
+  const agentPrompt = buildAiAgentMessages('帮我看看桌面', files, { recentDesktopEvents: [] })[0].content;
+  assert.match(agentPrompt, /通用 AI 助手/);
+  assert.match(agentPrompt, /不要把所有问题都硬转成桌面整理/);
+  assert.match(agentPrompt, /普通对话 intent 用 answer/);
+  assert.deepEqual(imageMessages[1].content[1], { type: 'image_url', image_url: { url: 'https://example.com/error.png' } });
+  assert.equal(command.action, 'organize');
+  assert.deepEqual(command.items, [
+    { source: 'C:/Desktop/a.fig', category: '设计文件', suggestedName: 'a.fig', reason: 'fig 文件' }
+  ]);
+  assert.deepEqual(rules, { rules: { 设计文件: ['.fig', '.sketch'] }, screenshotKeywords: ['截图'] });
+  assert.deepEqual(normalizeAiAgentContent(JSON.stringify({
+    intent: 'cleanup',
+    speech: '这像是低风险日志',
+    items: [{ source: 'C:/Desktop/a.fig', risk: 'low', reason: '测试' }],
+    rules: { 设计文件: ['.FIG'] }
+  }), files), {
+    intent: 'cleanup',
+    speech: '这像是低风险日志',
+    items: [{ source: 'C:/Desktop/a.fig', risk: 'low', reason: '测试' }],
+    rules: { 设计文件: ['.fig'] },
+    screenshotKeywords: []
+  });
+  assert.equal(extractStreamDelta({ choices: [{ delta: { content: '你' } }] }), '你');
+}
+
+async function testAiStreamingParsesSseChunks() {
+  const chunks = [
+    'data: {"choices":[{"delta":{"content":"你"}}]}\n\n',
+    'data: {"choices":[{"delta":{"content":"好"}}]}\n\n',
+    'data: [DONE]\n\n'
+  ];
+  const encoder = new TextEncoder();
+  const deltas = [];
+  const fetchImpl = async () => ({
+    ok: true,
+    body: {
+      getReader: () => ({
+        index: 0,
+        async read() {
+          if (this.index >= chunks.length) return { done: true };
+          return { done: false, value: encoder.encode(chunks[this.index++]) };
+        }
+      })
+    }
+  });
+
+  const result = await requestAiQuestionAnswerStream(
+    { agnesApiKey: 'test-key', agnesModel: 'agnes-2.5-flash' },
+    '打招呼',
+    [],
+    { fetchImpl, onDelta: delta => deltas.push(delta) }
+  );
+
+  assert.deepEqual(deltas, ['你', '好']);
+  assert.deepEqual(result, { answer: '你好' });
+}
+
 function testUsesSquareTransparentWebpLayout() {
   const root = path.join(__dirname, '..');
   const css = fs.readFileSync(path.join(root, 'src', 'styles.css'), 'utf8');
@@ -111,14 +245,16 @@ function testUsesSquareTransparentWebpLayout() {
   assert.doesNotMatch(renderer, /filemonster_(?:drag|work|success|error|wake|scan|hover|notify|thinking|ingest)\.webm/);
 }
 
-function testKeepsOnlyFiveWebpActionStates() {
+function testKeepsOnlyWebpActionStates() {
   const root = path.join(__dirname, '..');
   const renderer = fs.readFileSync(path.join(root, 'src', 'renderer.js'), 'utf8');
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'assets', 'videos', 'manifest.json'), 'utf8'));
-  const expectedActions = ['dizzy', 'idle', 'silly', 'sleep', 'wave'];
+  const expectedActions = ['chase', 'dizzy', 'idle', 'shy', 'silly', 'sleep', 'wave'];
   const expectedFiles = [
+    'filemonster_chase_mouse.webp',
     'filemonster_dizzy.webp',
     'filemonster_idle.webp',
+    'filemonster_shy.webp',
     'filemonster_silly.webp',
     'filemonster_sleep.webp',
     'filemonster_wave.webp'
@@ -147,8 +283,10 @@ function testWebpSubjectsShareConsistentHeight() {
 
   const root = path.join(__dirname, '..');
   const files = [
+    'filemonster_chase_mouse.webp',
     'filemonster_dizzy.webp',
     'filemonster_idle.webp',
+    'filemonster_shy.webp',
     'filemonster_silly.webp',
     'filemonster_sleep.webp',
     'filemonster_wave.webp'
@@ -173,8 +311,10 @@ function testWebpSubjectsShareConsistentHeight() {
   });
 
   const expectedHeights = {
+    'filemonster_chase_mouse.webp': [286, 294],
     'filemonster_dizzy.webp': [246, 254],
     'filemonster_idle.webp': [246, 254],
+    'filemonster_shy.webp': [246, 254],
     'filemonster_silly.webp': [246, 254],
     'filemonster_sleep.webp': [246, 254],
     'filemonster_wave.webp': [246, 254]
@@ -210,7 +350,9 @@ function testMouseInteractionsTriggerPetAnimations() {
   const root = path.join(__dirname, '..');
   const renderer = fs.readFileSync(path.join(root, 'src', 'renderer.js'), 'utf8');
 
-  assert.match(renderer, /petInteractive\.addEventListener\('mouseenter'[\s\S]*playAction\('silly', \{ restart: true \}\)/);
+  assert.match(renderer, /petInteractive\.addEventListener\('mouseenter'[\s\S]*playAction\('shy', \{ restart: true \}\)/);
+  assert.match(renderer, /function startWindowDrag\(\)[\s\S]*playAction\('chase', \{ restart: true, loop: true \}\)/);
+  assert.match(renderer, /function endWindowDrag\(\)[\s\S]*playAction\('idle', \{ restart: true, text: IDLE_LINES\[Math\.floor\(Math\.random\(\) \* IDLE_LINES\.length\)\] \}\)/);
   assert.match(renderer, /const wasSleeping = currentAction === 'sleep';[\s\S]*if \(wasSleeping\) playAction\('wave', \{ restart: true \}\)/);
   assert.match(renderer, /petInteractive\.addEventListener\('dragover'[\s\S]*playAction\('dizzy', \{ restart: true, loop: true \}\)/);
 }
@@ -293,6 +435,7 @@ function testPanelUsesCleanReferenceLayoutWithTrash() {
   const renderer = fs.readFileSync(path.join(root, 'src', 'renderer.js'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'src', 'preload.js'), 'utf8');
   const main = fs.readFileSync(path.join(root, 'src', 'main.js'), 'utf8');
+  const settingsSection = html.match(/<section class="panel-card settings-card">[\s\S]*?<\/section>/)?.[0] || '';
 
   assert.match(html, /class="brand-lockup"/);
   assert.match(html, /<div class="brand-copy">/);
@@ -306,6 +449,15 @@ function testPanelUsesCleanReferenceLayoutWithTrash() {
   assert.doesNotMatch(html, />[—□×]</);
   assert.match(html, /id="btnOrganize" class="quick-action top"/);
   assert.match(html, /id="btnScreenshots" class="quick-action top"/);
+  assert.doesNotMatch(html, /btnAiOrganize|btnAiCleanup/);
+  assert.match(html, /<section id="aiDialog" class="ai-dialog"[\s\S]*id="aiCommand"/);
+  assert.doesNotMatch(settingsSection, /ai-command-card|aiCommand|aiImageUrl/);
+  assert.match(html, /id="agnesApiKey" type="password"/);
+  assert.match(html, /id="agnesModel" type="text"/);
+  assert.match(html, /id="aiChatLog" class="ai-chat-log"/);
+  assert.match(html, /id="aiCommand"/);
+  assert.doesNotMatch(html, /id="btnRunAiCommand"|id="btnAnalyzeImage"|id="aiImageUrl"/);
+  assert.doesNotMatch(html, /btnGenerateRules|btnAskAi|ai-command-actions/);
   assert.match(html, /id="btnOpenVault" class="quick-action bottom"[\s\S]*<span class="action-label">[\s\S]*<svg class="action-icon"[\s\S]*<\/svg>[\s\S]*<span>[^<]+<\/span>[\s\S]*<\/span>/);
   assert.match(html, /id="btnOpenTrash" class="quick-action bottom trash"[\s\S]*<span class="action-label">[\s\S]*<svg class="action-icon"[\s\S]*<\/svg>[\s\S]*<span>[^<]+<\/span>[\s\S]*<\/span>/);
   assert.match(html, /id="btnUndo" class="quick-action bottom undo"[\s\S]*<span class="action-label">[\s\S]*<svg class="action-icon"[\s\S]*<\/svg>[\s\S]*<span>[^<]+<\/span>[\s\S]*<\/span>/);
@@ -319,14 +471,61 @@ function testPanelUsesCleanReferenceLayoutWithTrash() {
   assert.match(renderer, /ui\.btnBrowseVault\.addEventListener\('click'[\s\S]*saveCurrentSettings\(/);
   assert.match(renderer, /for \(const checkbox of \[ui\.safeMode, ui\.moveFolders, ui\.addDatePrefix, ui\.launchAtLogin, ui\.alwaysOnTop\]\)/);
   assert.match(renderer, /btnOpenTrash:[\s\S]*getElementById\('btnOpenTrash'\)/);
+  assert.doesNotMatch(renderer, /btnAiOrganize|btnAiCleanup|organizeDesktopWithAi|cleanupDesktopWithAi/);
+  assert.match(renderer, /window\.fileMonster\.runAiCommand\(command\)/);
+  assert.match(renderer, /function addAiChatMessage\(role, text = ''\)/);
+  assert.match(renderer, /function scrollAiChatToBottom\(\)/);
+  assert.match(renderer, /function typeAiChatAnswer\(message/);
+  assert.match(renderer, /async function sendAiDialogCommand\(\)/);
+  assert.match(renderer, /function beginAiStreamSpeech\(\)/);
+  assert.match(renderer, /function appendAiStreamSpeech\(payload\)/);
+  assert.doesNotMatch(renderer, /btnRunAiCommand|btnAnalyzeImage|aiImageUrl|sendAiImageCommand|analyzeImageWithStream/);
+  assert.match(renderer, /window\.fileMonster\.onAiStreamChunk\(appendAiStreamSpeech\)/);
+  assert.match(renderer, /window\.fileMonster\.onDesktopActivity\(handleDesktopActivity\)/);
+  assert.match(renderer, /async function openAiDialog\(\)/);
+  assert.match(renderer, /async function closeAiDialog\(options = \{\}\)/);
+  assert.doesNotMatch(renderer, /dialog-answer/);
+  assert.match(renderer, /event\.button === 0 && event\.ctrlKey[\s\S]*openAiDialog\(\)/);
+  assert.match(renderer, /ui\.btnCloseAiDialog\.addEventListener\('click', \(\) => closeAiDialog\(\)\)/);
+  assert.match(renderer, /event\.key !== 'Enter' \|\| event\.shiftKey \|\| event\.isComposing/);
+  assert.match(renderer, /sendAiDialogCommand\(\)/);
+  assert.match(renderer, /agnesApiKey[\s\S]*settings\.hasAgnesApiKey/);
   assert.match(renderer, /ui\.btnOpenTrash\.addEventListener\('click'[\s\S]*window\.fileMonster\.openTrash\(\)/);
+  assert.doesNotMatch(preload, /organizeDesktopWithAi|cleanupDesktopWithAi/);
+  assert.match(preload, /runAiCommand:\s*command => ipcRenderer\.invoke\('ai:command', command\)/);
+  assert.doesNotMatch(preload, /generateAiRules|askAiAboutDesktop|analyzeImageUrlWithAi:/);
+  assert.match(preload, /analyzeImageUrlWithAiStream:\s*input => ipcRenderer\.invoke\('ai:image-url-stream', input\)/);
+  assert.match(preload, /onAiStreamChunk:\s*callback => ipcRenderer\.on\('ai:stream-chunk'/);
+  assert.match(preload, /onDesktopActivity:\s*callback => ipcRenderer\.on\('desktop:activity'/);
   assert.match(preload, /openTrash:\s*\(\) => ipcRenderer\.invoke\('trash:open'\)/);
   assert.match(preload, /chooseVaultPath:\s*\(\) => ipcRenderer\.invoke\('settings:choose-vault'\)/);
   assert.match(main, /const PANEL_WIDTH = 280;/);
   assert.match(main, /const PANEL_HEIGHT = 420;/);
   assert.match(main, /function openTrash\(\)/);
   assert.match(main, /function chooseVaultPath\(\)/);
+  assert.match(main, /function getLoginItemOptions\(openAtLogin\)/);
+  assert.match(main, /options\.args = \[app\.getAppPath\(\)\]/);
+  assert.match(main, /syncLoginItemSettings\(settingsCache\)/);
   assert.match(main, /ipcMain\.handle\('trash:open'/);
+  assert.match(main, /ipcMain\.handle\('ai:command'/);
+  assert.doesNotMatch(main, /ipcMain\.handle\('ai:rules'|ipcMain\.handle\('ai:ask'|ipcMain\.handle\('ai:image-url'/);
+  assert.doesNotMatch(main, /requestAiOrganizePlan|requestAiCleanupPlan|organize:ai-desktop|cleanup:ai-desktop/);
+  assert.match(main, /function shouldAttachDesktopContext/);
+  assert.match(main, /mode: attachDesktopContext \? 'desktop-agent' : 'general-assistant'/);
+  assert.match(main, /requestAiAgentPlan\(settings, text, files/);
+  assert.match(main, /pendingAiPlan = \{ intent: 'organize'/);
+  assert.match(main, /输入“确认”我再执行/);
+  assert.match(main, /startDesktopWatcher\(\)/);
+  assert.match(main, /win\.webContents\.send\('desktop:activity'/);
+  assert.doesNotMatch(main, /requestAiRulesPlan|requestAiQuestionAnswer\(settings|requestAiImageAnswer\(settings|requestAiQuestionAnswerStream/);
+  assert.match(main, /requestAiImageAnswerStream\(settings, question, imageUrl, \{ onDelta: sendDelta \}\)/);
+  assert.doesNotMatch(main, /ipcMain\.handle\('ai:ask-stream'/);
+  assert.match(main, /ipcMain\.handle\('ai:image-url-stream'/);
+  assert.doesNotMatch(main, /保存 AI 生成的分类规则|保存规则/);
+  assert.match(main, /本地文件路径不能直接传给 Agnes 图像理解/);
+  assert.match(main, /filter\(item => item\.risk === 'low'\)/);
+  assert.match(main, /path\.join\(vaultPath, '_回收站'\)/);
+  assert.match(main, /toPublicSettings\(settings\)/);
   assert.match(main, /ipcMain\.handle\('settings:choose-vault'/);
   assert.match(css, /--panel-width:\s*280px/);
   assert.match(css, /\.control-panel\s*{[^}]*height:\s*420px/s);
@@ -352,6 +551,16 @@ function testPanelUsesCleanReferenceLayoutWithTrash() {
   assert.match(css, /\.action-icon,\s*\.window-icon\s*{[^}]*fill:\s*none[^}]*stroke:\s*currentColor[^}]*stroke-width:\s*1\.8/s);
   assert.match(css, /\.window-actions button\s*{[^}]*color:\s*rgba\(255,\s*255,\s*255,\s*0\.9\)/s);
   assert.match(css, /\.quick-action\.trash/s);
+  assert.doesNotMatch(css, /\.quick-action\.ai|\.quick-action\.cleanup/);
+  assert.match(css, /\.ai-dialog\s*{[^}]*position:\s*fixed[^}]*left:\s*calc\(var\(--pet-size\) \+ 12px\)/s);
+  assert.match(css, /\.ai-chat-log\s*{[^}]*height:\s*150px[^}]*overflow-y:\s*auto/s);
+  assert.match(css, /\.ai-chat-message\.user\s*{[^}]*justify-self:\s*end/s);
+  assert.match(css, /\.ai-chat-message\.assistant\s*{[^}]*justify-self:\s*start/s);
+  assert.match(css, /\.ai-dialog\s*{[^}]*user-select:\s*text/s);
+  assert.match(css, /\.ai-chat-message\s*{[^}]*user-select:\s*text/s);
+  assert.doesNotMatch(css, /speech\.dialog-answer/);
+  assert.match(css, /\.app-shell\.ai-dialog-open\s*{[^}]*width:\s*100vw[^}]*height:\s*100vh/s);
+  assert.doesNotMatch(css, /\.ai-command-actions/);
   assert.match(css, /\.setting-row\s*{[^}]*min-height:\s*48px/s);
   assert.match(css, /\.path-row\s*{[^}]*grid-template-columns:\s*1fr/s);
   assert.match(css, /\.switch\s+input:checked \+ \.switch-ui/s);
@@ -376,8 +585,12 @@ Promise.resolve()
   .then(testAllowsExplicitDropOutsideDesktop)
   .then(testDoesNotTreatSkippedOnlyResultAsAFileChange)
   .then(testKeepsDropTargetInteractive)
+  .then(testAiPlanKeepsOnlyKnownMetadataPaths)
+  .then(testAiCleanupKeepsOnlyKnownRiskItems)
+  .then(testAiCommandRulesAndQuestionContracts)
+  .then(testAiStreamingParsesSseChunks)
   .then(testUsesSquareTransparentWebpLayout)
-  .then(testKeepsOnlyFiveWebpActionStates)
+  .then(testKeepsOnlyWebpActionStates)
   .then(testWebpSubjectsShareConsistentHeight)
   .then(testAmbientAnimationsRunInOrderEveryThirtyToSixtySeconds)
   .then(testMouseInteractionsTriggerPetAnimations)

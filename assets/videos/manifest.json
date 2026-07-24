@@ -6,13 +6,23 @@
   ],
   "subjectHeight": 250,
   "subjectHeights": {
+    "chase": 290,
     "dizzy": 250,
     "idle": 250,
+    "shy": 250,
     "silly": 250,
     "sleep": 250,
     "wave": 250
   },
   "segments": {
+    "chase": {
+      "file": "filemonster_chase_mouse.webp",
+      "frames": 97,
+      "durationMs": 4033,
+      "loop": true,
+      "label": "chase",
+      "subjectHeight": 290
+    },
     "dizzy": {
       "file": "filemonster_dizzy.webp",
       "frames": 98,
@@ -27,6 +37,14 @@
       "durationMs": 3630,
       "loop": false,
       "label": "idle",
+      "subjectHeight": 250
+    },
+    "shy": {
+      "file": "filemonster_shy.webp",
+      "frames": 97,
+      "durationMs": 4033,
+      "loop": false,
+      "label": "shy",
       "subjectHeight": 250
     },
     "silly": {

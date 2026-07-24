@@ -11,38 +11,44 @@ npm start
 ```
 ## 核心功能
 - 透明视频桌宠：待机、拖拽、整理、成功、失败、睡眠、唤醒、扫描、AI 命名、提醒、思考、吞入文件等动作。
+- 鼠标交互：拖动文件怪窗口时播放“追赶鼠标”，鼠标靠近时播放“害羞”，两者与现有动作保持同一主体高度。
 - 文件整理：拖文件到文件怪身上即可整理；也可以点击“整理桌面”。
 - 截图整理：识别 `screenshot / screen shot / 截屏 / 截图 / 屏幕快照 / スクリーンショット` 等命名。
-- 命名建议：本地启发式“AI 命名建议”，不会上传文件内容。
+- 通用 AI 助手 + 文件怪代理：Ctrl + 左键打开 AI 对话窗口，普通问题可以直接回答；涉及桌面、文件、规则、整理、清理时才切换成文件代理。
+- 主动观察：监听桌面新增文件，在气泡里主动提示是否需要判断怎么处理。
+- 对话式展示：大模型回复直接显示在 AI 窗口聊天记录里，支持流式/打字式输出、自动滚动和选中文字复制，桌宠气泡保持原来的状态文案。
+- 聊天输入：AI 窗口只保留文本输入框，按 `Enter` 发送，按 `Shift+Enter` 换行，不再显示底部发送/图片按钮。
+- 确认式执行：AI 先在对话窗口里给整理/清理计划，用户输入“确认”才执行；清理只移动到 `_回收站`，不会永久删除。
 - 规则编辑：可在面板内修改分类规则 JSON、整理箱路径、安全模式、是否移动文件夹、日期前缀、开机自启、置顶。
 - 右键菜单：整理桌面、整理截图、命名建议、打开整理箱、撤销、置顶、开机自启、退出。
+
+## AI 接入说明
+- 默认接口：`https://apihub.agnes-ai.com/v1/chat/completions`
+- 默认模型：`agnes-2.5-flash`
+- 灰度不可用时回退：`agnes-2.0-flash`
+- API Key 可在设置面板填写，也可设置环境变量 `AGNES_API_KEY` 或 `AGNES_AI_API_KEY`。
+- 普通对话默认不上传桌面文件列表；只有问题涉及桌面/文件/规则/整理/清理时，才上传文件元数据：完整路径、文件名、扩展名、文件/文件夹类型、大小、修改时间、当前分类；不会读取文件内容。
+- 会改动文件的 AI 操作都会先生成对话计划，用户输入“确认”后才执行，执行时仍走现有安全校验和撤销记录。
+- 当前 AI 对话窗口只开放文本输入；图像理解接口保留在主进程中，但界面不再展示图片 URL 输入。本地截图/OCR 需要后续接入本机 OCR 或显式上传流程。
 ## 目录结构
 ```txt
 file-monster-video-desktop-pet/
   package.json
   README.md
   assets/
-    source/
-      filemonster_source.mp4
     videos/
-      filemonster_idle.webm
-      filemonster_drag.webm
-      filemonster_work.webm
-      filemonster_success.webm
-      filemonster_error.webm
-      filemonster_sleep.webm
-      filemonster_wake.webm
-      filemonster_scan.webm
-      filemonster_magic.webm
-      filemonster_hover.webm
-      filemonster_notify.webm
-      filemonster_thinking.webm
-      filemonster_ingest.webm
-      filemonster_master.webm
+      filemonster_chase_mouse.webp
+      filemonster_dizzy.webp
+      filemonster_idle.webp
+      filemonster_shy.webp
+      filemonster_silly.webp
+      filemonster_sleep.webp
+      filemonster_wave.webp
       manifest.json
   scripts/
     process-video.py
   src/
+    ai-client.js
     main.js
     preload.js
     index.html
@@ -76,4 +82,4 @@ npm run process-video
 ## 开发建议
 - 商用版本建议让视频/三维同学重新导出原生透明背景 WebM 或 PNG 序列帧，这样边缘和光效会更干净。
 - 当前代码已预留动作状态机，后续只要替换 `assets/videos/filemonster_*.webm` 即可升级视觉资产。
-- 若要做 AI 真实命名，可在主进程添加 OpenAI-compatible 调用，但建议默认只发送文件元数据，不读取文件内容。
+- AI 功能已通过 Agnes 兼容接口接入，普通问题走通用助手模式；文件相关问题只发送文件元数据。若后续要分析本地文件内容或截图，需要单独增加用户确认和本地 OCR/上传流程。

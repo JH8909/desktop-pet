@@ -2,6 +2,7 @@ const petSprite = document.getElementById('petSprite');
 const appShell = document.getElementById('app');
 const petStage = document.getElementById('petStage');
 const petInteractive = document.getElementById('petInteractive');
+const aiDialog = document.getElementById('aiDialog');
 const speech = document.getElementById('speech');
 const statusText = document.getElementById('statusText');
 const actionState = window.fileMonsterActionState.createActionState();
@@ -14,11 +15,16 @@ const ui = {
   btnOpenVault: document.getElementById('btnOpenVault'),
   btnOpenTrash: document.getElementById('btnOpenTrash'),
   btnUndo: document.getElementById('btnUndo'),
+  btnCloseAiDialog: document.getElementById('btnCloseAiDialog'),
   btnBrowseVault: document.getElementById('btnBrowseVault'),
   btnCollapse: document.getElementById('btnCollapse'),
   btnMinimize: document.getElementById('btnMinimize'),
   btnQuit: document.getElementById('btnQuit'),
   vaultPath: document.getElementById('vaultPath'),
+  aiChatLog: document.getElementById('aiChatLog'),
+  aiCommand: document.getElementById('aiCommand'),
+  agnesApiKey: document.getElementById('agnesApiKey'),
+  agnesModel: document.getElementById('agnesModel'),
   petSize: document.getElementById('petSize'),
   petSizeValue: document.getElementById('petSizeValue'),
   safeMode: document.getElementById('safeMode'),
@@ -46,8 +52,10 @@ const IDLE_SLEEP_DELAY_MS = 180000;
 const CLICK_ACTION_DELAY_MS = 280;
 
 const ACTIONS = {
+  chase: { src: '../assets/videos/filemonster_chase_mouse.webp', loop: true, durationMs: 4033, text: '追上鼠标' },
   dizzy: { src: '../assets/videos/filemonster_dizzy.webp', loop: true, durationMs: 3630, text: '转两圈，醒脑' },
   idle: { src: '../assets/videos/filemonster_idle.webp', loop: false, durationMs: 3630, text: IDLE_LINES[0] },
+  shy: { src: '../assets/videos/filemonster_shy.webp', loop: false, durationMs: 4033, text: '靠太近啦' },
   silly: { src: '../assets/videos/filemonster_silly.webp', loop: false, durationMs: 3630, text: '摸一下，开窍' },
   sleep: { src: '../assets/videos/filemonster_sleep.webp', loop: true, durationMs: 3630, text: '回血，勿扰' },
   wave: { src: '../assets/videos/filemonster_wave.webp', loop: false, durationMs: 3630, text: '漂亮，过关' }
@@ -109,6 +117,10 @@ let ambientSchedulerStarted = false;
 let suppressNextClick = false;
 let lastPrimaryClickAt = 0;
 let panelTransition = Promise.resolve();
+let aiDialogOpen = false;
+let activeAiStreamId = '';
+let activeAiStreamText = '';
+let answerTypeTimer = null;
 
 function clearActionTimer() {
   if (actionTimer) {
@@ -267,7 +279,8 @@ function applyPetSize(size, options = {}) {
   return petSize;
 }
 
-function setSpeech(text) {
+function setSpeech(text, options = {}) {
+  speech.classList.toggle('answer', Boolean(options.answer));
   speech.textContent = text;
   statusText.textContent = text;
 }
@@ -322,6 +335,33 @@ function touch() {
   lastInteractionAt = Date.now();
   scheduleIdleSleep();
   scheduleNextAmbientAction();
+}
+
+async function openAiDialog() {
+  if (aiDialogOpen) {
+    ui.aiCommand.focus();
+    return;
+  }
+  aiDialogOpen = true;
+  appShell.classList.add('ai-dialog-open');
+  aiDialog.hidden = false;
+  await window.fileMonster.togglePanelSize(true, getCurrentPetSize());
+  mousePassthrough = false;
+  window.fileMonster.setMousePassthrough(false);
+  touch();
+  ui.aiCommand.focus();
+}
+
+async function closeAiDialog(options = {}) {
+  if (!aiDialogOpen) return;
+  aiDialogOpen = false;
+  aiDialog.hidden = true;
+  appShell.classList.remove('ai-dialog-open');
+  if (options.resize !== false && panelCollapsed) {
+    await window.fileMonster.togglePanelSize(false, getCurrentPetSize());
+  }
+  mousePassthrough = getMousePassthrough();
+  window.fileMonster.setMousePassthrough(mousePassthrough);
 }
 
 function getCategorySpeechKey(category) {
@@ -383,6 +423,97 @@ function logResult(title, result) {
   statusText.textContent = lines.slice(0, 2).join(' · ');
 }
 
+function displayAiAnswer(result, fallback) {
+  const message = String(result?.message || fallback || '').trim();
+  if (!message) return;
+  typeAiChatAnswer(message);
+}
+
+function scrollAiChatToBottom() {
+  ui.aiChatLog.scrollTop = ui.aiChatLog.scrollHeight;
+}
+
+function addAiChatMessage(role, text = '') {
+  const item = document.createElement('div');
+  item.className = `ai-chat-message ${role}`;
+  item.textContent = text;
+  ui.aiChatLog.appendChild(item);
+  scrollAiChatToBottom();
+  return item;
+}
+
+function typeAiChatAnswer(message, target = addAiChatMessage('assistant')) {
+  const text = String(message || '');
+  if (answerTypeTimer) {
+    clearInterval(answerTypeTimer);
+    answerTypeTimer = null;
+  }
+  activeAiStreamId = '';
+  activeAiStreamText = '';
+  let index = 0;
+  target.textContent = '';
+  scrollAiChatToBottom();
+  answerTypeTimer = setInterval(() => {
+    index = Math.min(text.length, index + 2);
+    target.textContent = text.slice(0, index);
+    scrollAiChatToBottom();
+    if (index >= text.length) {
+      clearInterval(answerTypeTimer);
+      answerTypeTimer = null;
+    }
+  }, 24);
+}
+
+function beginAiStreamSpeech() {
+  if (answerTypeTimer) {
+    clearInterval(answerTypeTimer);
+    answerTypeTimer = null;
+  }
+  activeAiStreamId = `ai-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  activeAiStreamText = '';
+  addAiChatMessage('assistant', '思考中...');
+  return activeAiStreamId;
+}
+
+function appendAiStreamSpeech(payload) {
+  if (!payload || payload.requestId !== activeAiStreamId) return;
+  activeAiStreamText += String(payload.delta || '');
+  const current = ui.aiChatLog.lastElementChild;
+  if (current && current.classList.contains('assistant')) {
+    current.textContent = activeAiStreamText || '思考中...';
+    scrollAiChatToBottom();
+  }
+}
+
+async function sendAiDialogCommand() {
+  const command = ui.aiCommand.value.trim();
+  if (!command) return;
+  addAiChatMessage('user', command);
+  ui.aiCommand.value = '';
+  const target = addAiChatMessage('assistant', '思考中...');
+  try {
+    const result = await window.fileMonster.runAiCommand(command);
+    logResult('AI 指令完成', result);
+    typeAiChatAnswer(result?.message || 'AI 没有返回内容', target);
+    if (operationResult.didMutateFiles(result)) {
+      await playAction('wave', { restart: true, text: buildOrganizeSpeech(result) });
+    }
+  } catch (err) {
+    target.textContent = err.message;
+    scrollAiChatToBottom();
+    statusText.textContent = err.message;
+  }
+}
+
+function handleDesktopActivity(payload) {
+  const message = String(payload?.message || '').trim();
+  if (!message || aiDialogOpen || !panelCollapsed) return;
+  setSpeech(message, { answer: true });
+  if (!ui.aiCommand.value.trim()) {
+    ui.aiCommand.value = '看看最近桌面新增的文件，告诉我怎么处理';
+  }
+}
+
 async function runWithAction(workingAction, task, successTitle, options = {}) {
   touch();
   // 使用动作本身的 loop 设置：scan 等自带 loop:true 的会循环播放，
@@ -397,6 +528,10 @@ async function runWithAction(workingAction, task, successTitle, options = {}) {
       result.message = result.message || '没有文件被移动，请查看跳过原因';
     }
     logResult(successTitle, result);
+    if (options.answerToSpeech && result?.message && !operationResult.didMutateFiles(result)) {
+      displayAiAnswer(result, successTitle);
+      return result;
+    }
     if (result?.message && String(result.message).includes('已取消')) {
       await playAction('idle', { restart: true, text: '好，先不收拾' });
       return result;
@@ -418,6 +553,9 @@ async function loadSettingsToUi(settings) {
   ui.addDatePrefix.checked = Boolean(settings.addDatePrefix);
   ui.launchAtLogin.checked = Boolean(settings.launchAtLogin);
   ui.alwaysOnTop.checked = Boolean(settings.alwaysOnTop);
+  ui.agnesApiKey.value = '';
+  ui.agnesApiKey.placeholder = settings.hasAgnesApiKey ? '已保存，留空保持当前 Key' : '填写 Agnes API Key';
+  ui.agnesModel.value = settings.agnesModel || 'agnes-2.5-flash';
   const petSize = normalizePetSize(settings.petSize ?? 220);
   document.documentElement.style.setProperty('--pet-size', `${petSize}px`);
   petStage.style.setProperty('--pet-preview-size', `${petSize}px`);
@@ -437,9 +575,12 @@ async function saveCurrentSettings(options = {}) {
       addDatePrefix: ui.addDatePrefix.checked,
       launchAtLogin: ui.launchAtLogin.checked,
       alwaysOnTop: ui.alwaysOnTop.checked,
+      agnesModel: ui.agnesModel.value.trim() || 'agnes-2.5-flash',
       screenshotKeywords: currentSettings.screenshotKeywords,
       rules: currentSettings.rules
     };
+    const agnesApiKey = ui.agnesApiKey.value.trim();
+    if (agnesApiKey) settings.agnesApiKey = agnesApiKey;
     const saved = await window.fileMonster.saveSettings(settings);
     await loadSettingsToUi(saved);
     applyPetSize(saved.petSize, { resizeWindow: true });
@@ -523,8 +664,7 @@ function startWindowDrag() {
   if (draggingWindow) return;
   draggingWindow = true;
   petStage.classList.add('dragging');
-  // 拖动时只改文案和样式，不切换当前动画
-  setSpeech(ACTIONS.dizzy.text);
+  playAction('chase', { restart: true, loop: true });
   window.fileMonster.dragStart();
 }
 
@@ -539,11 +679,7 @@ function endWindowDrag() {
   window.fileMonster.dragEnd();
   if (wasDragging) {
     suppressNextClick = true;
-    if (currentAction === 'idle' || !currentAction) {
-      setSpeech(IDLE_LINES[Math.floor(Math.random() * IDLE_LINES.length)]);
-    } else {
-      setSpeech((ACTIONS[currentAction] || ACTIONS.idle).text);
-    }
+    playAction('idle', { restart: true, text: IDLE_LINES[Math.floor(Math.random() * IDLE_LINES.length)] });
     requestAnimationFrame(() => ensurePetVisible());
   }
 }
@@ -563,6 +699,12 @@ function resetPointerState() {
 }
 
 petInteractive.addEventListener('pointerdown', event => {
+  if (event.button === 0 && event.ctrlKey) {
+    event.preventDefault();
+    resetPointerState();
+    openAiDialog();
+    return;
+  }
   // 右键：只开关设置，绝不进入拖拽
   if (event.button === 2) {
     event.preventDefault();
@@ -672,8 +814,8 @@ petInteractive.addEventListener('mouseenter', () => {
   if (hoverLock || draggingWindow || !panelCollapsed) return;
   hoverLock = true;
   touch();
-  playAction('silly', { restart: true });
-  setTimeout(() => { hoverLock = false; }, 1800);
+  playAction('shy', { restart: true });
+  setTimeout(() => { hoverLock = false; }, ACTIONS.shy.durationMs);
 });
 
 ui.btnOrganize.addEventListener('click', () => runWithAction('dizzy', () => window.fileMonster.organizeDesktop(), '桌面整理完成', { requiresFileChange: true, failureScene: 'generic' }));
@@ -681,6 +823,12 @@ ui.btnScreenshots.addEventListener('click', () => runWithAction('dizzy', () => w
 ui.btnOpenVault.addEventListener('click', () => runWithAction('silly', () => window.fileMonster.openVault(), '已打开整理箱', { successScene: 'openVault', failureScene: 'open' }));
 ui.btnOpenTrash.addEventListener('click', () => runWithAction('silly', () => window.fileMonster.openTrash(), '已打开回收站', { successScene: 'openTrash', failureScene: 'open' }));
 ui.btnUndo.addEventListener('click', () => runWithAction('silly', () => window.fileMonster.undoOrganize(), '撤销整理完成', { successScene: 'undo', failureScene: 'generic' }));
+ui.btnCloseAiDialog.addEventListener('click', () => closeAiDialog());
+ui.aiCommand.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+  event.preventDefault();
+  sendAiDialogCommand();
+});
 ui.btnBrowseVault.addEventListener('click', async () => {
   const result = await window.fileMonster.chooseVaultPath();
   if (!result?.ok || !result.path) return;
@@ -721,6 +869,14 @@ ui.vaultPath.addEventListener('change', () => {
   saveCurrentSettings();
 });
 
+ui.agnesApiKey.addEventListener('change', () => {
+  saveCurrentSettings({ statusText: 'AI Key 已更新' });
+});
+
+ui.agnesModel.addEventListener('change', () => {
+  saveCurrentSettings({ statusText: 'AI 模型已更新' });
+});
+
 for (const checkbox of [ui.safeMode, ui.moveFolders, ui.addDatePrefix, ui.launchAtLogin, ui.alwaysOnTop]) {
   checkbox.addEventListener('change', () => {
     saveCurrentSettings();
@@ -731,6 +887,7 @@ function setPanelCollapsed(collapsed) {
   panelTransition = panelTransition.catch(() => {}).then(async () => {
     if (panelCollapsed === collapsed) return;
 
+    await closeAiDialog({ resize: false });
     resetPointerState();
     panelCollapsed = collapsed;
     appShell.classList.toggle('collapsed', panelCollapsed);
@@ -769,6 +926,9 @@ window.fileMonster.onSettingsChanged(async settings => {
   await loadSettingsToUi(settings);
   applyPetSize(settings.petSize ?? 220, { resizeWindow: true });
 });
+
+window.fileMonster.onAiStreamChunk(appendAiStreamSpeech);
+window.fileMonster.onDesktopActivity(handleDesktopActivity);
 
 
 setInterval(() => {

@@ -57,6 +57,10 @@ button.secondary { background: linear-gradient(135deg, #8a4dff, #c34bff); color:
   padding: 4px;
 }
 .app-shell.collapsed .control-panel { display: none; }
+.app-shell.ai-dialog-open {
+  width: 100vw;
+  height: 100vh;
+}
 .pet-stage {
   position: relative;
   display: grid;
@@ -148,6 +152,17 @@ button.secondary { background: linear-gradient(135deg, #8a4dff, #c34bff); color:
   bottom: -6px;
   border: 6px solid transparent;
   border-top-color: rgba(18, 18, 22, 0.82);
+}
+.speech.answer {
+  max-width: 280px;
+  min-width: min(220px, calc(100vw - 24px));
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 7px 9px;
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: pre-wrap;
 }
 .control-panel {
   width: var(--panel-width);
@@ -248,6 +263,93 @@ h2 { margin: 0 0 12px; font-size: 13px; color: #f4f4f4; letter-spacing: 0; }
   border: 1px solid rgba(255,255,255,.10);
   background: rgba(255,255,255,.045);
   box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+}
+.ai-dialog {
+  position: fixed;
+  top: 72px;
+  left: calc(var(--pet-size) + 12px);
+  width: 280px;
+  padding: 10px;
+  border-radius: 16px;
+  background: linear-gradient(145deg, rgba(17, 21, 25, 0.98), rgba(13, 15, 18, 0.98));
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 22px 60px rgba(0,0,0,.36);
+  backdrop-filter: blur(24px);
+  pointer-events: auto;
+  user-select: text;
+  z-index: 10;
+}
+.ai-dialog[hidden] {
+  display: none;
+}
+.ai-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ai-dialog-header h2 {
+  margin: 0;
+}
+.ai-dialog-header button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 9px;
+  background: rgba(255,255,255,.06);
+  border: 1px solid rgba(255,255,255,.11);
+  color: rgba(255,255,255,.9);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 10px 24px rgba(0,0,0,.18);
+}
+.ai-chat-log {
+  height: 150px;
+  overflow-y: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.16);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(182, 255, 0, 0.28) transparent;
+}
+.ai-chat-log:empty {
+  display: none;
+}
+.ai-chat-message {
+  max-width: 92%;
+  padding: 7px 9px;
+  border-radius: 10px;
+  color: white;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.ai-chat-message.user {
+  justify-self: end;
+  background: rgba(182, 255, 0, 0.18);
+  border: 1px solid rgba(182, 255, 0, 0.26);
+}
+.ai-chat-message.assistant {
+  justify-self: start;
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.12);
+}
+.ai-command-card {
+  display: grid;
+  gap: 8px;
+}
+.ai-command-card textarea {
+  min-height: 62px;
+  resize: vertical;
+  user-select: text;
 }
 .quick-action-grid {
   display: grid;
@@ -353,6 +455,16 @@ label { pointer-events: auto; color: var(--muted); }
   font-size: 12px;
 }
 input[type="text"], textarea {
+  width: 100%;
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 9px;
+  padding: 7px 8px;
+  color: white;
+  background: rgba(0,0,0,.18);
+  outline: none;
+  font-size: 10px;
+}
+input[type="password"] {
   width: 100%;
   border: 1px solid rgba(255,255,255,.14);
   border-radius: 9px;

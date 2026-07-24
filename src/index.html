@@ -59,6 +59,14 @@
             <button id="btnBrowseVault" type="button">浏览</button>
           </div>
         </div>
+        <div class="setting-row path-row">
+          <span class="setting-label">Agnes API Key</span>
+          <input id="agnesApiKey" type="password" placeholder="留空保持当前 Key" />
+        </div>
+        <div class="setting-row path-row">
+          <span class="setting-label">AI 模型</span>
+          <input id="agnesModel" type="text" />
+        </div>
         <div class="switches">
           <label class="setting-row switch"><span class="setting-label">安全模式</span><input id="safeMode" type="checkbox" /><span class="switch-ui"></span></label>
           <label class="setting-row switch"><span class="setting-label">移动文件夹</span><input id="moveFolders" type="checkbox" checked /><span class="switch-ui"></span></label>
@@ -68,6 +76,16 @@
         </div>
       </section>
     </aside>
+    <section id="aiDialog" class="ai-dialog" aria-label="AI 对话框" hidden>
+      <header class="ai-dialog-header">
+        <h2>AI 指令</h2>
+        <button id="btnCloseAiDialog" type="button" title="关闭"><svg class="window-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 8l8 8"></path><path d="M16 8l-8 8"></path></svg></button>
+      </header>
+      <div id="aiChatLog" class="ai-chat-log" aria-live="polite"></div>
+      <div class="ai-command-card">
+        <textarea id="aiCommand" rows="3" placeholder="输入：把今天截图整理一下 / 以后 .fig 放设计文件 / 这些文件能不能删"></textarea>
+      </div>
+    </section>
   </main>
   <script src="./action-state.js"></script>
   <script src="./operation-result.js"></script>
